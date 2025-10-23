@@ -1,14 +1,15 @@
 # ⚙️🤖 CNC Monitor: Data-Driven Monitoring of CNC Milling Machines 🖥️📊🛠️
 
-**CNC Monitor** is a framework designed to support **data-driven monitoring of CNC milling machines** using the Bosch benchmark dataset from *“Smart Data Collection System for Brownfield CNC Milling Machines”*. The goal is to enable predictive maintenance and anomaly detection, helping operators and engineers identify deviations and potential failures in real-time.
+**CNC Monitor** is a framework designed to support **data-driven monitoring of CNC milling machines** using the Bosch benchmark dataset from *“Smart Data Collection System for Brownfield CNC Milling Machines”*. The goal is to enable predictive maintenance and anomaly detection, helping operators and engineers identify deviations and potential failures in real-time with quantum computing.
 
 The framework combines advanced techniques in:  
 - **Signal Preprocessing:** Filtering and smoothing multivariate machine signals (vibration, spindle, feed axes).  
 - **Windowing & Feature Extraction:** Segmenting time series into informative windows and computing metrics like variance, RMS, or spectral features.  
-- **Anomaly Detection:** Using quantum or classical machine learning models trained on normal operational data.  
-
+- **Anomaly Detection:** Using machine learning models trained on normal operational data.  
+- **Quantum Computing:** Leveraging Quantum Temporal Kernels (QTK) to embed multivariate time-series data into a quantum feature space, capturing complex temporal correlations and enhancing anomaly detection capabilities beyond classical method
 <div align="center">
   <img src="./cnc_milling.jpg" alt="CNC Machine" width="45%" style="display:inline-block; margin-right:10px;">
+  <img src="./temp_kern.jpg" alt="Quantum Temporal Kernel" width="45%" style="display:inline-block; margin-left:10px;">
 </div>
 
 ---
