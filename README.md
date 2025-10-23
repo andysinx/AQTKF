@@ -62,4 +62,6 @@ Outputs both **raw** and **filtered/segmented** windows ready for modeling.
 # 🛠️ How to Run the Pipeline
 
 # 1. Install dependencies
+```bash
 pip install -r requirements.txt
+```
