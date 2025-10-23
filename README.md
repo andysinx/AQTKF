@@ -51,7 +51,10 @@ Outputs both **raw** and **filtered/segmented** windows ready for modeling.
 .
 ├── preprocessing/
 │   └── dataset_preprocessing.ipynb
-├── requirements.txt
+├──circuit_ansatz.jpg
+├──circuit_ansatz1.jpg
+├──cnc_milling.jpg
+├──requirements.txt
 └── README.md
 
 ```
