@@ -4,7 +4,7 @@
 
 The framework combines advanced techniques in:  
 - **Signal Preprocessing:** Filtering and smoothing multivariate machine signals (vibration, spindle, feed axes).  
-- **Windowing & Feature Extraction:** Segmenting time series into informative windows and computing metrics like variance, RMS, or spectral features.  
+- **Windowing:** Segmenting time series into informative windows.  
 - **Anomaly Detection:** Using machine learning models trained on normal operational data.  
 - **Quantum Computing:** Leveraging Quantum Temporal Kernels (QTK) to embed multivariate time-series data into a quantum feature space, capturing complex temporal correlations and enhancing anomaly detection capabilities beyond classical method
 <div align="center">
