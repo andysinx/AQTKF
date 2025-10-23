@@ -8,7 +8,7 @@ The framework combines advanced techniques in:
 - **Anomaly Detection:** Using quantum or classical machine learning models trained on normal operational data.  
 
 <div align="center">
-  <img src="./cnc_milling.WEBP" alt="CNC Machine" width="45%" style="display:inline-block; margin-right:10px;">
+  <img src="./cnc_milling.jpg" alt="CNC Machine" width="45%" style="display:inline-block; margin-right:10px;">
 </div>
 
 ---
