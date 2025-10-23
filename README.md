@@ -1,4 +1,4 @@
-# ⚙️🤖 CNC Monitor: Data-Driven Monitoring of CNC Milling Machines 🖥️📊🛠️
+# ⚙️🤖 Quantum CNC Monitor: Data-Driven Monitoring of CNC Milling Machines with Quantum Computers 🖥️📊🛠️
 
 **CNC Monitor** is a framework designed to support **data-driven monitoring of CNC milling machines** using the Bosch benchmark dataset from *“Smart Data Collection System for Brownfield CNC Milling Machines”*. The goal is to enable predictive maintenance and anomaly detection, helping operators and engineers identify deviations and potential failures in real-time with quantum computing.
 
