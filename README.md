@@ -9,7 +9,8 @@ The framework combines advanced techniques in:
 - **Quantum Computing:** Leveraging Quantum Temporal Kernels (QTK) to embed multivariate time-series data into a quantum feature space, capturing complex temporal correlations and enhancing anomaly detection capabilities beyond classical method
 <div align="center">
   <img src="./cnc_milling.jpg" alt="CNC Machine" width="45%" style="display:inline-block; margin-right:10px;">
-  <img src="./temp_kern.jpg" alt="Quantum Temporal Kernel" width="45%" style="display:inline-block; margin-left:10px;">
+  <img src="./circuit_ansatz.jpg" alt="Quantum Temporal Kernel Ansatz" width="45%" style="display:inline-block; margin-left:10px;">
+   <img src="./circuit_ansatz1.jpg" alt="Quantum Temporal Kernel Ansatz" width="45%" style="display:inline-block; margin-left:10px;">
 </div>
 
 ---
