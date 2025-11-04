@@ -82,8 +82,8 @@ def prepare_and_filter_signals(start_idx=0, end_idx=200):
 
     # Applica il filtro Butterworth
     bw = ButterworthFilter(fs=2000, cutoff=75, order=4)
-    filtered_good = bw.process_and_plot_signals(relevant_good, start_idx=0, end_idx=len(relevant_good), plot_first=False)[0]
-    filtered_anom = bw.process_and_plot_signals(relevant_anom, start_idx=0, end_idx=len(relevant_anom), plot_first=False)[0]
+    filtered_good = bw.process_and_plot_signals(relevant_good, start_idx=0, end_idx=len(relevant_good), plot_first=False, type= 'good')[0]
+    filtered_anom = bw.process_and_plot_signals(relevant_anom, start_idx=0, end_idx=len(relevant_anom), plot_first=False, type= 'bad')[0]
 
     return relevant_good, relevant_anom, filtered_good, filtered_anom
 
@@ -128,16 +128,8 @@ def compute_quantum_kernel(norm_windows, anom_windows):
     test_windows = 2 * ((anom_windows - X_min) / (X_max - X_min)) - 1
 
 
-    # Concatenate normal and anomalous windows
-    all_windows = np.concatenate([train_windows, test_windows], axis=0)
-
-    # Shuffle the concatenated windows
-    rng = np.random.default_rng(seed=48)  
-    shuffled_indices = rng.permutation(len(all_windows))
-    all_windows_shuffled = all_windows[shuffled_indices]
-
     # --- KERNEL COMPUTATION ---
-    qtk.compute_kernels(train_windows, all_windows_shuffled)
+    qtk.compute_kernels(train_windows, test_windows)
     K_train = qtk.K_train_dict[0]
 
     # --- DIAGNOSTICS ---
@@ -195,7 +187,7 @@ def plot_scores(scores, kernel_name):
 # 1. Quantum Temporal Kernel SVM
 # ============================================================
 
-def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.05):
+def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.1):
     from sklearn.svm import OneClassSVM
     import numpy as np
 
@@ -218,7 +210,7 @@ def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.05):
 # 2. Classical Kernels SVM
 # ============================================================
 
-def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict, nu=0.05):
+def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict, nu=0.1):
 
     n_train = train_windows.shape[0]
     results_pred = {}
@@ -228,10 +220,6 @@ def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict,
     # reshape to 2D once
     X_train_flat = train_windows.reshape(n_train, -1)
     X_test_flat = test_windows.reshape(test_windows.shape[0], -1)
-    X_test_all = np.concatenate([X_train_flat, X_test_flat], axis=0)
-    rng = np.random.default_rng(seed=48)
-    shuffled_indices = rng.permutation(len(X_test_all))
-    X_test_all_shuffled = X_test_all[shuffled_indices]
 
     for name, kernel in kernel_dict.items():
         if callable(kernel):
@@ -246,8 +234,8 @@ def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict,
             # standard sklearn kernel
             oc = OneClassSVM(kernel=kernel, gamma='scale', nu=nu)
             oc.fit(X_train_flat)
-            scores = oc.decision_function(X_test_all_shuffled)
-            pred = oc.predict(X_test_all_shuffled)
+            scores = oc.decision_function(X_test_flat)
+            pred = oc.predict(X_test_flat)
 
         results_pred[name] = pred
         results_scores[name] = scores
@@ -329,10 +317,13 @@ def main():
     test_anom_indices = np.setdiff1d(all_anom_indices, train_anom_indices)[:10]
 
     # Select windows
+    rng = np.random.default_rng(seed=48)
     window_size = 100
     train_norm_windows = select_random_windows([datalist[i] for i in train_norm_indices], window_size, random_seed=48, verbose=False)
     train_anom_windows = select_random_windows([datalist_anomalies[i] for i in train_anom_indices], window_size, random_seed=48, verbose=False)
     train_windows = np.concatenate([train_norm_windows, train_anom_windows], axis=0)
+    shuffled_train_indices = rng.permutation(len(train_windows))
+    train_windows = train_windows[shuffled_train_indices]
 
     test_norm_windows = select_random_windows([datalist[i] for i in test_norm_indices], window_size, random_seed=48, verbose=False)
     test_anom_windows = select_random_windows([datalist_anomalies[i] for i in test_anom_indices], window_size, random_seed=48, verbose=False)
@@ -341,16 +332,21 @@ def main():
     # True labels
     y_true = np.concatenate([np.ones(len(test_norm_windows)), -np.ones(len(test_anom_windows))])
 
+    # Shuffle test windows and corresponding labels
+    shuffled_test_indices = rng.permutation(len(test_windows))
+    test_windows = test_windows[shuffled_test_indices]
+    y_test = y_true[shuffled_test_indices]
+
     # Quantum Temporal Kernel
     start_time = time.time()
 
-    qtk, train_qtk, test_qtk = compute_quantum_kernel(train_windows, train_windows)
+    qtk, train_qtk, test_qtk = compute_quantum_kernel(train_windows, test_windows)
 
     end_time = time.time()
     elapsed = end_time - start_time
 
     # Conversione in ore, minuti, secondi
-    hours, rem = divmod(elapsed, 3600)
+    hours, rem = divmod(elapsed, 3600)  
     minutes, seconds = divmod(rem, 60)
 
     oc_qtk, pred_qtk, scores_qtk = run_oneclass_svm_quantum(qtk, qtk.K_train_dict[0], qtk.K_test_dict[0], y_true)
@@ -366,14 +362,13 @@ def main():
         "Cosine": cosine_kernel,
         "Laplacian": laplacian_kernel,
         "Exponential": exponential_kernel,
-        "MexicanHat": wavelet_kernel,
-        "DTW": dtw_kernel
+        "MexicanHat": wavelet_kernel
     }
 
-    oc_svms_classic, preds_classic, scores_classic = run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict)
+    oc_svms_classic, preds_classic, scores_classic = run_oneclass_svm_classical(train_windows, test_windows, y_test, kernel_dict)
 
     # Kernel diagnostics
-    K_norm = kernel_diagnostics(qtk.K_train_dict[0])
+    #K_norm = kernel_diagnostics(qtk.K_train_dict[0])
 
 if __name__ == "__main__":
 
