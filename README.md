@@ -57,12 +57,11 @@ Outputs both **raw** and **filtered/segmented** windows ready for modeling.
       ├── other_kernels.py
       ├── preprocessing_data.py
       └── qtk.py
-├──circuit_ansatz.jpg
+├──README.md
+├── circuit_ansatz.jpg
 ├──circuit_ansatz1.jpg
 ├──cnc_milling.jpg
-├──requirements.txt
-└── README.md
-
+└── requirements.txt
 ```
 
 # 🛠️ How to Run the Pipeline
