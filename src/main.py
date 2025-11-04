@@ -14,7 +14,7 @@ from sklearn.manifold import MDS
 from scipy.linalg import eigh
 import matplotlib.pyplot as plt
 from other_kernels import *
-
+import time
 # ============================================================
 # 1. Signal Comparison Utilities
 # ============================================================
@@ -165,7 +165,6 @@ def compute_quantum_kernel(norm_windows, anom_windows):
 # ============================================================
 
 def compute_metrics(kernel_name, y_true, pred, scores):
-    from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
     print(f"\n--- Metrics for {kernel_name} Kernel ---")
     bal_acc = balanced_accuracy_score(y_true, pred)
     prec = precision_score(y_true, pred, pos_label=-1)
@@ -220,8 +219,6 @@ def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.05):
 # ============================================================
 
 def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict, nu=0.05):
-    from sklearn.svm import OneClassSVM
-    import numpy as np
 
     n_train = train_windows.shape[0]
     results_pred = {}
@@ -315,7 +312,6 @@ def kernel_diagnostics(K):
 # ============================================================
 
 def main():
-    import numpy as np
     rng = np.random.default_rng(seed=48)
 
     # Load and filter signals
@@ -346,7 +342,19 @@ def main():
     y_true = np.concatenate([np.ones(len(test_norm_windows)), -np.ones(len(test_anom_windows))])
 
     # Quantum Temporal Kernel
+    start_time = time.time()
+    
     qtk, train_qtk, test_qtk = compute_quantum_kernel(train_windows, train_windows)
+
+    end_time = time.time()
+    elapsed = end_time - start_time
+
+    # Conversione in ore, minuti, secondi
+    hours, rem = divmod(elapsed, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    print(f"Execution time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
+
     oc_qtk, pred_qtk, scores_qtk = run_oneclass_svm_quantum(qtk, qtk.K_train_dict[0], qtk.K_test_dict[0], y_true)
 
     # Classical kernels dictionary
@@ -368,4 +376,16 @@ def main():
     K_norm = kernel_diagnostics(qtk.K_train_dict[0])
 
 if __name__ == "__main__":
+
+    start_time = time.time()
+
     main()
+    
+    end_time = time.time()
+    elapsed = end_time - start_time
+
+    # Conversione in ore, minuti, secondi
+    hours, rem = divmod(elapsed, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    print(f"Execution time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
