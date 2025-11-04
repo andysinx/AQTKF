@@ -1,6 +1,6 @@
 import itertools
 from tqdm import tqdm
-from qiskit import QuantumCircuit
+from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.quantum_info import Operator
 from qiskit_ibm_runtime.fake_provider import FakeTorino
@@ -113,6 +113,33 @@ class QuantumTemporalKernel():
         phi = Statevector(self.embedding(x2, t))
         inner_product = abs(np.vdot(psi.data, phi.data)) ** 2
         return np.real(inner_product)
+    
+    def evaluate_instant_similarity_sampler(self, x1, x2, t, shots=1024):
+        # Generate embeddings for x1 and x2
+        qc1 = self.embedding(x1, t)
+        qc2 = self.embedding(x2, t)
+        
+        # Compose the circuits: qc1 followed by inverse of qc2
+        qc = qc1.compose(qc2.inverse())
+
+        # Add classical register
+        cr = ClassicalRegister(self.n_qubits, name='cr')
+        qc.add_register(cr)
+        
+        # Measure all qubits into the classical register
+        qc.measure(range(self.n_qubits), cr)
+        
+        # Execute on Sampler (probabilistic)
+        job = self.sampler.run([qc], shots=shots)
+        result = job.result()
+        
+        # Get counts from the named classical register
+        counts = result[0].data.cr.get_counts()  
+
+        # Estimated fidelity = probability of measuring |0...0>
+        p0 = counts.get('0'*self.n_qubits, 0)
+        return p0 / shots
+
 
     def generate_K_train(self, X_train):
         n_samples = X_train.shape[0]
@@ -123,7 +150,7 @@ class QuantumTemporalKernel():
             for i, j in train_combinations:
                 x = X_train[i][t]
                 y = X_train[j][t]
-                s = self.evaluate_instant_similarity(x, y, t)   # contributo corrente
+                s = self.evaluate_instant_similarity_sampler(x, y, t)   # contributo corrente
                 K_avg[i, j] += s
                 K_avg[j, i] += s
 
