@@ -132,7 +132,7 @@ def compute_quantum_kernel(norm_windows, anom_windows):
     all_windows = np.concatenate([train_windows, test_windows], axis=0)
 
     # Shuffle the concatenated windows
-    rng = np.random.default_rng(seed=48)  # fissiamo il seed per riproducibilità
+    rng = np.random.default_rng(seed=48)  
     shuffled_indices = rng.permutation(len(all_windows))
     all_windows_shuffled = all_windows[shuffled_indices]
 
@@ -343,7 +343,7 @@ def main():
 
     # Quantum Temporal Kernel
     start_time = time.time()
-    
+
     qtk, train_qtk, test_qtk = compute_quantum_kernel(train_windows, train_windows)
 
     end_time = time.time()
@@ -353,10 +353,10 @@ def main():
     hours, rem = divmod(elapsed, 3600)
     minutes, seconds = divmod(rem, 60)
 
-    print(f"Execution time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
-
     oc_qtk, pred_qtk, scores_qtk = run_oneclass_svm_quantum(qtk, qtk.K_train_dict[0], qtk.K_test_dict[0], y_true)
-
+    
+    print(f"Total QTK Computing + ONECLASS Time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
+    
     # Classical kernels dictionary
     kernel_dict = {
         "Linear": "linear",
@@ -388,4 +388,4 @@ if __name__ == "__main__":
     hours, rem = divmod(elapsed, 3600)
     minutes, seconds = divmod(rem, 60)
 
-    print(f"Execution time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
+    print(f"Total Experiment Execution Time: {int(hours)}h {int(minutes)}m {seconds:.2f}s")
