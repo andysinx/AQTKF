@@ -57,6 +57,7 @@ class QuantumTemporalKernel():
         scale = 0.1
         mu_z = {k: v*scale for k,v in {'XY': -0.114, 'XZ': 0.067, 'YZ': -0.061}.items()}
         mu_xx = {k: v*scale for k,v in {'XY': -0.127, 'XZ': 0.075, 'YZ': -0.066}.items()}
+        mu_yy = {k: v*scale for k,v in {'XY': -0.150, 'XZ': 0.070, 'YZ': -0.090}.items()}
 
         # operatori singoli su 3 qubit
         Z1 = np.kron(np.kron(Z, I), I)
@@ -73,13 +74,18 @@ class QuantumTemporalKernel():
         X1X2 = np.kron(np.kron(X, X), I)
         X1X3 = np.kron(np.kron(X, I), X)
         X2X3 = np.kron(np.kron(I, X), X)
+        Y1Y2 = np.kron(np.kron(Y, Y), I)
+        Y1Y3 = np.kron(np.kron(Y, I), Y)
+        Y2Y3 = np.kron(np.kron(I, Y), Y)
+        
 
         # Hamiltoniano totale
         H = (
             lambda_z[0] * Z1 + lambda_z[1] * Z2 + lambda_z[2] * Z3 +
             lambda_x[0] * X1 + lambda_x[1] * X2 + lambda_x[2] * X3 +
-            mu_z['XY'] * Z1Z2 + mu_z['XZ'] * Z1Z3 + mu_z['YZ'] * Z2Z3 +
-            mu_xx['XY'] * X1X2 + mu_xx['XZ'] * X1X3 + mu_xx['YZ'] * X2X3
+            mu_z['XY'] * Z1Z2 + mu_z['XZ'] * Z1Z3 + mu_z['YZ'] * Z2Z3 + 
+            mu_xx['XY'] * X1X2 + mu_xx['XZ'] * X1X3 + mu_xx['YZ'] * X2X3 +
+            mu_yy['XY'] * Y1Y2 + mu_yy['XZ'] * Y1Y3 + mu_yy['YZ'] * Y2Y3
         )
 
         self.H = H
@@ -150,7 +156,7 @@ class QuantumTemporalKernel():
             for i, j in train_combinations:
                 x = X_train[i][t]
                 y = X_train[j][t]
-                s = self.evaluate_instant_similarity_sampler(x, y, t)   # contributo corrente
+                s = self.evaluate_instant_similarity(x, y, t)   # contributo corrente
                 K_avg[i, j] += s
                 K_avg[j, i] += s
 

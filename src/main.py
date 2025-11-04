@@ -169,25 +169,24 @@ def compute_metrics(kernel_name, y_true, pred, scores):
     print(f"F1 Score (anom)   : {f1:.3f}")
     print(f"AUC               : {auc:.3f}")
 
-def plot_scores(scores, kernel_name):
+def plot_scores(scores_normal,scores_anom, nu=0.05, name='qtk'):
     import matplotlib.pyplot as plt
     plt.figure(figsize=(5, 5))
-    plt.hist(scores, bins=30, alpha=0.6, label='Test')
-    threshold = np.percentile(scores, 5)
-    plt.axvline(threshold, color='r', linestyle='--', label=f'Threshold ({threshold:.4f})')
+    plt.hist(scores_normal, bins=30, alpha=0.6, label="Normal", density=True)
+    plt.hist(scores_anom, bins=30, alpha=0.6, label="Anomalous", density=True)
+    plt.axvline(0, color='r', linestyle='--', label='Decision boundary (0)')
     plt.xlabel("Decision function score")
-    plt.ylabel("Count")
+    plt.ylabel("Density")
     plt.legend()
-    plt.tight_layout()
-    plt.savefig(f'image/distribution_scores_{kernel_name}.png', dpi=300)
-    plt.close()
+    plt.title(f"Decision scores distribution (name={name}, nu={nu})")
+    plt.show()
 
 
 # ============================================================
 # 1. Quantum Temporal Kernel SVM
 # ============================================================
 
-def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.1):
+def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.05):
     from sklearn.svm import OneClassSVM
     import numpy as np
 
@@ -200,7 +199,11 @@ def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.1):
     n_normali = np.sum(pred == 1)
     n_anomale = np.sum(pred == -1)
     print(f"[Quantum] Tested: {totale}, Normali: {n_normali}, Anomale: {n_anomale}")
-    plot_scores(scores, "qtk")
+    # --- Plot distribuzione punteggi ---
+    y_true = y_true if isinstance(y_true, np.ndarray) else np.array(y_true)
+    scores_normal = scores[y_true == 1]
+    scores_anom = scores[y_true == -1]
+    plot_scores(scores_normal,scores_anom, nu, name='qtk')
     compute_metrics("Quantum", y_true, pred, scores)
 
     return oc_svm_qtk, pred, scores
@@ -210,7 +213,7 @@ def run_oneclass_svm_quantum(qtk, K_train, K_test, y_true, nu=0.1):
 # 2. Classical Kernels SVM
 # ============================================================
 
-def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict, nu=0.1):
+def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict, nu=0.05):
 
     n_train = train_windows.shape[0]
     results_pred = {}
@@ -230,19 +233,25 @@ def run_oneclass_svm_classical(train_windows, test_windows, y_true, kernel_dict,
             oc.fit(K_train)
             scores = oc.decision_function(K_test)
             pred = oc.predict(K_test)
+            y_true = y_true if isinstance(y_true, np.ndarray) else np.array(y_true)
+            scores_normal = scores[y_true == 1]
+            scores_anom = scores[y_true == -1]
         else:
             # standard sklearn kernel
             oc = OneClassSVM(kernel=kernel, gamma='scale', nu=nu)
             oc.fit(X_train_flat)
             scores = oc.decision_function(X_test_flat)
             pred = oc.predict(X_test_flat)
+            y_true = y_true if isinstance(y_true, np.ndarray) else np.array(y_true)
+            scores_normal = scores[y_true == 1]
+            scores_anom = scores[y_true == -1]
 
         results_pred[name] = pred
         results_scores[name] = scores
         oc_svms[name] = oc
 
         # print metrics & plot
-        plot_scores(scores, name)
+        plot_scores(scores_normal,scores_anom, nu, name=name)
         compute_metrics(name, y_true, pred, scores)
 
     return oc_svms, results_pred, results_scores
@@ -309,8 +318,8 @@ def main():
 
     # Split train/test indices
     all_norm_indices = np.arange(N_norm)
-    train_norm_indices = rng.choice(all_norm_indices, size=90, replace=False)
-    test_norm_indices = np.setdiff1d(all_norm_indices, train_norm_indices)[:90]
+    train_norm_indices = rng.choice(all_norm_indices, size=100, replace=False)
+    test_norm_indices = np.setdiff1d(all_norm_indices, train_norm_indices)[:100]
 
     all_anom_indices = np.arange(N_anom)
     train_anom_indices = rng.choice(all_anom_indices, size=10, replace=False)
@@ -320,8 +329,7 @@ def main():
     rng = np.random.default_rng(seed=48)
     window_size = 100
     train_norm_windows = select_random_windows([datalist[i] for i in train_norm_indices], window_size, random_seed=48, verbose=False)
-    train_anom_windows = select_random_windows([datalist_anomalies[i] for i in train_anom_indices], window_size, random_seed=48, verbose=False)
-    train_windows = np.concatenate([train_norm_windows, train_anom_windows], axis=0)
+    train_windows = train_norm_windows
     shuffled_train_indices = rng.permutation(len(train_windows))
     train_windows = train_windows[shuffled_train_indices]
 
