@@ -179,7 +179,8 @@ def plot_scores(scores_normal,scores_anom, nu=0.05, name='qtk'):
     plt.ylabel("Density")
     plt.legend()
     plt.title(f"Decision scores distribution (name={name}, nu={nu})")
-    plt.show()
+    plt.savefig(f"distrib_scores_{name}_{nu}.png", dpi=300)
+    plt.close()
 
 
 # ============================================================
