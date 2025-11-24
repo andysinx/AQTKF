@@ -19,6 +19,7 @@ from evovaq.ParticleSwarmOptimization import PSO
 from evovaq.BigBangBigCrunch import BBBC
 from ChaothicEnhancedGeneticAlgorithm import CGA
 from tqdm import tqdm
+import json
 
 def optimize_qtk(qtk: QuantumTemporalKernel,
                  X_train,
@@ -60,6 +61,11 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
     n_params = len(qtk.full_terms)
     if param_bounds is None:
         param_bounds = (-0.5, 0.5)
+    
+    # --- salva kernel iniziale ---
+    '''K_train_initial = qtk.generate_K_train(X_train)
+    print("K_train_old",K_train_initial)
+    np.save(os.path.join(save_dir, f"K_train_initial_{optimizer}.npy"), K_train_initial)'''
 
     def cost_function(params):
         # Update params
@@ -69,7 +75,7 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
         print("K_train_old:", K1)
         qtk.set_H_coeffs(params)
         new_coeffs_list = [c for (_, c) in qtk.full_terms]
-        #print("new_coeffs_list",new_coeffs_list)
+        print("new_coeffs_list",new_coeffs_list)
         diff = np.array(new_coeffs_list) - np.array(old_coeffs)
         #print("Diff coeffs:", diff)
         K_train = qtk.generate_K_train(X_train)
@@ -78,11 +84,11 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
 
         # Target kernel (cluster intra-normal / anom)
         K_target = qtk.K_target
-
         alignment = np.trace(K_train @ K_target) / (
             np.linalg.norm(K_train, 'fro') * np.linalg.norm(K_target, 'fro')
         )
         return -alignment  # Maximize alignment -> minimize negative
+
 
     problem = Problem(n_params=n_params, param_bounds=param_bounds, obj_function=cost_function)
 
@@ -120,14 +126,44 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
     # --------------------------
     # Ciclo sui run
     # --------------------------
-    best_solutions = []
-    for run in tqdm(range(1, n_runs+1), desc=f"{optimizer} runs"):
-        res = global_search.optimize(problem, pop_size=pop_size, max_gen=max_gen, verbose=True, seed=42*run)
-        best_solutions.append(res)
-        np.save(os.path.join(save_dir, f"qtk_{optimizer.lower()}_run_{run}.npy"), res.x)
+    # --- history per grafici ---
+    history_all_runs = []
 
-    best_idx = np.argmin([r.fun for r in best_solutions])
-    return best_solutions[best_idx]
+    # --- ciclo sulle run ---
+    best_solution_overall = None
+    best_fun_overall = np.inf
+
+    for run in tqdm(range(1, n_runs+1), desc=f"{optimizer} runs"):
+        # Ogni ottimizzatore dovrebbe restituire anche la history dei migliori fitness per generazione
+        res = global_search.optimize(problem, pop_size=pop_size, max_gen=max_gen, verbose=True, seed=42*run)
+        
+        # salva evoluzione fitness per questa run (supponendo res.history contiene best per gen)
+        if hasattr(res, 'history'):
+            history_all_runs.append(res.history)
+        else:
+            history_all_runs.append([res.fun] * max_gen)  # fallback
+
+        # aggiorna migliore soluzione globale
+        if res.fun < best_fun_overall:
+            best_fun_overall = res.fun
+            best_solution_overall = res
+
+    # --- salva best solution finale ---
+    coeff_names = [name for name, _ in qtk.full_terms]
+    params_dict = {name: float(val) for name, val in zip(coeff_names, best_solution_overall.x)}
+    best_solution_info = {
+        "params": params_dict,
+        "fun": float(best_solution_overall.fun)
+    }
+
+    with open(os.path.join(save_dir, f"qtk_{optimizer.lower()}_best_solution.json"), "w") as f:
+        json.dump(best_solution_info, f, indent=4)
+
+    # --- salva kernel finale ---
+    K_train_final = qtk.generate_K_train(X_train)
+    np.save(os.path.join(save_dir, f"K_train_final_{optimizer}.npy"), K_train_final)
+
+    return best_solution_info, history_all_runs, K_train_final#, K_train_initial
 
 
 # ===================================
@@ -224,7 +260,7 @@ def kernel_diagnostics(K, optimizer='DE', save_prefix="images_1/kernel_diag"):
 # 4️⃣ Preprocessing
 # ===================================
 def normalize_dataframe(df, exclude_cols=["anomaly", "changepoint"]):
-    scaler = MinMaxScaler(feature_range=(-1, 1))
+    scaler = MinMaxScaler(feature_range=(0, 1))
     feature_cols = [c for c in df.columns if c not in exclude_cols]
     df_norm = df.copy()
     df_norm[feature_cols] = scaler.fit_transform(df[feature_cols])
@@ -430,7 +466,7 @@ def analyze_and_save_kernel(K_train_opt, n_train_norm, n_train_anom, optimizer='
 # ===================================
 # 6️⃣ MAIN
 # ===================================
-def main():
+'''def main():
     print("=== ⚙️ START QUANTUM TEMPORAL KERNEL PIPELINE ===")
 
     # --------------------------
@@ -456,9 +492,9 @@ def main():
     # --------------------------
     # Selezione train/test
     # --------------------------
-    n_train = 25  # totale per l'ottimizzazione
-    n_train_norm = 20
-    n_train_anom = 5
+    n_train = 8  # totale per l'ottimizzazione
+    n_train_norm = 6
+    n_train_anom = 2
 
     train_windows = windows_af[:n_train_norm] + windows_v1_anom[:n_train_anom]
     rng = np.random.default_rng(seed=42)
@@ -469,14 +505,15 @@ def main():
     print(f"✅ Train windows: {len(train_windows)}")
 
     # Flatten windows
-    X_train = flatten_windows(train_windows)
+    X_train = [w.drop(columns=["anomaly", "changepoint"], errors="ignore").to_numpy() 
+                    for w in train_windows]
 
     # --------------------------
     # Quantum Temporal Kernel
     # --------------------------
     print("\n⚛️ Start Quantum Temporal Kernel Experiments...")
     start_qtk = time.time()
-    qtk = QuantumTemporalKernel(n_qubits=3, L=window_size, embedding_type="amplitude", n_norm=n_train_norm, n_anom=n_train_anom )
+    qtk = QuantumTemporalKernel(n_qubits=3, L=10, embedding_type="amplitude", n_norm=n_train_norm, n_anom=n_train_anom )
     end_qtk = time.time()
     print(f"🕒 Initializing time for QTK: {end_qtk - start_qtk:.2f}s")
 
@@ -570,10 +607,24 @@ def main():
                     name=name)
     print(f"Time elapsed: {time.time() - start:.2f}s")
 
-    print("\n=== ✅ COMPLETED PIPELINE ===")
+    print("\n=== ✅ COMPLETED PIPELINE ===")'''
 
 
-
+def main():
+    np.random.seed(100)
+    X_fake = [np.random.randn(10, 8) for _ in range(4)] # 4 finestre fake
+    X_fake_scaled = [(w - w.min()) / (w.max() - w.min()) for w in X_fake]
+    qtk = QuantumTemporalKernel(n_qubits=3, L=5, embedding_type="amplitude", n_norm=3, n_anom=1)
+    K_train = qtk.generate_K_train(X_fake_scaled)
+    print('K_train before optimization:',K_train)
+    print('H after', qtk.H)
+    coeff = np.random.uniform(-2,2,len(qtk.full_terms))
+    print('old coeffs:',[c for (_,c) in qtk.full_terms])
+    print('New coeffs:',coeff)
+    qtk.set_H_coeffs(coeff)
+    K_train = qtk.generate_K_train(X_fake_scaled)
+    print('K_train afteyr optimization:',K_train)
+    print(K_train)
 # Entry point
 if __name__ == "__main__":
     main()

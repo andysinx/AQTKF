@@ -194,11 +194,11 @@ class QuantumTemporalKernel:
         for pair, coeff in self.nu_pairs.items():
             i, j = self._parse_pair(pair)
             H += coeff * (self._pauli_op(n, [(i, X), (j, X)]) + self._pauli_op(n, [(i, Y), (j, Y)]))
-
         self.H = H
         return H
     
     def generate_full_H(self, coeffs=None):
+            
             """
             Genera un Hamiltoniano completo su n_qubits come combinazione lineare
             di tutti i prodotti tensoriali di matrici di Pauli {I, X, Y, Z}.
@@ -234,15 +234,29 @@ class QuantumTemporalKernel:
             # aggiorna full_terms con i nuovi coefficienti
             self.full_terms = [(label,c) for (label,_), c in zip(self.full_terms, coeffs)]
             self.H = H
+            print('H before:', self.H)
             return H
     
     def set_H_coeffs(self, coeffs):
         """
-        Imposta i coefficienti dell'Hamiltoniano completo generato da generate_full_H.
+        Aggiorna solo i coefficienti dei termini già presenti in full_terms
+        senza rigenerare i termini stessi.
         """
-        if not self.full_terms:
-            self.generate_full_H()
-        self.generate_full_H(coeffs=coeffs)
+        if len(coeffs) != len(self.full_terms):
+            raise ValueError("Length of coeffs must match number of full_terms")
+        
+        # aggiorna solo i coefficienti
+        self.full_terms = [(label, c) for (label, _) , c in zip(self.full_terms, coeffs)]
+        
+        # ricostruisci H usando i coefficienti aggiornati
+        H = np.zeros((2**self.n_qubits, 2**self.n_qubits), dtype=complex)
+        for label, c in self.full_terms:
+            op = np.array([[1]], dtype=complex)
+            for l in label:
+                op = np.kron(op, {'I': I, 'X': X, 'Y': Y, 'Z': Z}[l])
+            H += c * op
+        self.H = H
+    
 
     # --------------------------
     # Parsing pair
@@ -280,19 +294,20 @@ class QuantumTemporalKernel:
     # Embedding (switchable)
     # ==========================
     def embedding(self, x_window, t):
+        assert self.embedding_type == "efficient_su2" or self.embedding_type == "amplitude" or self.embedding_type == "angle"
         if self.embedding_type == "efficient_su2":
             return self.embedding_efficient_su2(x_window, reps=3)
         elif self.embedding_type == "amplitude":
             # usa use_mean=True per mantenere comportamento simile all'angle (media temporale)
-            return self.embedding_amplitude(x_window, t, use_mean=True)
-        else:
+            return self.embedding_amplitude(x_window, t)
+        elif self.embedding_type == "angle":
             return self.embedding_angle(x_window, t)
         
 
     # ===========================
     # Amplitude embedding (nuova)
     # ===========================
-    def embedding_amplitude(self, x_window, t, use_mean=True):
+    def embedding_amplitude(self, x_window, t):
         """
         Amplitude embedding su n_qubits:
         - x_window: array-like. Se 2D (time x features) default prende la media temporale.
@@ -300,50 +315,21 @@ class QuantumTemporalKernel:
         - t: tempo istante (usato per l'evoluzione Hamiltoniana dopo la preparazione di stato).
         Restituisce un QuantumCircuit che prepara lo stato amplitude-encoded e poi applica U(t).
         """
-        n = self.n_qubits
-        dim = 2 ** n
-
-        # Estrai vettore di feature dall'input
+        qc = QuantumCircuit(self.n_qubits)
+        #assert x is 1D array with length n_qubits
         x_array = np.array(x_window, dtype=float)
-        if x_array.ndim == 2:
-            if use_mean:
-                vec = np.mean(x_array, axis=0)       # media sulle osservazioni temporali (shape = n_features)
-            else:
-                vec = np.ravel(x_array)              # usa tutte le entries (flatten temporale)
-        elif x_array.ndim == 1:
-            vec = x_array
-        elif x_array.ndim == 0:
-            vec = np.array([float(x_array)])
-        else:
-            vec = np.ravel(x_array)
-
-        # Se ci sono più elementi di dim, trunca; se meno, pad con zeri
-        if len(vec) > dim:
-            vec = vec[:dim]
-        elif len(vec) < dim:
-            pad = np.zeros(dim - len(vec), dtype=float)
-            vec = np.concatenate([vec, pad])
-
-        # Normalizza L2: evitare divisione per 0
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            # se il vettore è tutto zero, crea uno stato |0...0>
-            state = np.zeros(dim, dtype=complex)
-            state[0] = 1.0 + 0.0j
-        else:
-            state = np.array(vec, dtype=complex) / norm
-
-        # Costruisci il circuito che inizializza lo stato alle ampiezze date
-        qc = QuantumCircuit(n)
+        assert x_array.ndim == 1, "x_window must be 1D array, corresponding to the features at time t"
+        assert np.all(x_array >= 0), "Amplitude encoding requires non-negative data"
+        #assert len(x_array) <= 2*self.n_qubits, f"We need at least {len(x_array).bit_length()} qubits to encode {len(x_array)} features"
+        x_norm = x_array / np.linalg.norm(x_array)
         # Initialize richiede vettore di dimensione 2^n
-        init = Initialize(state)
-        qc.append(init, list(range(n)))
-        qc.barrier()
-
+        qc.initialize(x_norm, range(self.n_qubits)) 
         # Applica evoluzione Hamiltoniana come negli altri embedding
-        t_scaled = 2 * np.pi * (t + 1) / self.length * self.T
+        t_scaled = 2*np.pi*float(t)/max(1,self.length)*self.T
+        #print('t_scaled:',t_scaled)
         U_t = expm(-1j * self.H * t_scaled)
-        qc.unitary(Operator(U_t), range(n))
+        #print('U_t:',U_t)
+        qc.unitary(Operator(U_t), range(self.n_qubits))
 
         return qc
 
@@ -353,29 +339,16 @@ class QuantumTemporalKernel:
     def embedding_angle(self, x_window, t):
         qc = QuantumCircuit(self.n_qubits)
         x_array = np.array(x_window, dtype=float)
-        if x_array.ndim == 2:
-            avg_features = np.mean(x_array, axis=0)
-        elif x_array.ndim ==1:
-            avg_features = x_array
-        elif x_array.ndim==0:
-            avg_features = np.repeat(float(x_array), self.n_qubits)
-        else:
-            raise ValueError(f"x_window shape unexpected: {x_array.shape}")
-        avg_features = np.clip(avg_features, -1.0, 1.0)
-        for i in range(self.n_qubits):
-            v = float(avg_features[i % len(avg_features)])
-            qc.rx(v*np.pi, i)
-            qc.rz(v*np.pi, i)
-        # entangling
-        for i in range(self.n_qubits-1):
-            qc.cz(i, i+1)
-        if self.n_qubits>1:
-            qc.cx(self.n_qubits-1,0)
+        assert x_array.ndim == 1, "x_window must be 1D array, corresponding to the features at time t"
+        assert len(x_array) <= self.n_qubits, f"We need at least {len(x_array)} qubits to encode {len(x_array)} features"
+        for i in range(len(x_array)):
+            qc.rx(np.pi*x_array[i], i)
         # Hamiltoniano
         t_scaled = 2*np.pi*float(t)/max(1,self.length)*self.T
         U_t = expm(-1j*self.H*t_scaled)
         qc.unitary(Operator(U_t), range(self.n_qubits))
         return qc
+
 
     # --------------------------
     # Efficient SU2 embedding
@@ -449,20 +422,47 @@ class QuantumTemporalKernel:
     # Kernel generation
     # --------------------------
     def generate_K_train(self, X_train):
+        """
+        Generate the quantum temporal kernel for the training set.
+
+        Parameters
+        ----------
+        X_train : list of np.ndarray
+            Each element is a 2D array of shape (window_size, n_features) representing a window.
+
+        Returns
+        -------
+        K_avg : np.ndarray
+            Symmetric kernel matrix of shape (n_samples, n_samples).
+        """
         n_samples = len(X_train)
-        combs = list(itertools.combinations(range(n_samples), 2))
-        K_avg = np.zeros((n_samples,n_samples),dtype=float)
-        for t in tqdm(range(self.length), desc="Generating K_train"):
-            for i,j in combs:
-                xi = X_train[i][t]
-                xj = X_train[j][t]
-                s = self.evaluate_instant_similarity(xi,xj,t)
-                K_avg[i,j] += s
-                K_avg[j,i] += s
-            for i in range(n_samples):
-                K_avg[i,i] += 1.0
-        K_avg /= float(self.length)
-        K_avg = 0.5*(K_avg+K_avg.T)
+        K_avg = np.zeros((n_samples, n_samples), dtype=float)
+
+        # Loop over all sample pairs
+        for i in tqdm(range(n_samples), desc="Generating K_train"):
+            xi_window = X_train[i]  # shape = (window_size, n_features)
+            for j in range(i, n_samples):
+                xj_window = X_train[j]
+                sim_sum = 0.0
+
+                # Take the minimum length of the two windows (or self.length) to avoid IndexError
+                window_len = min(xi_window.shape[0], xj_window.shape[0], self.length)
+                # Sum similarity over all timesteps
+                for t in range(window_len):
+                    xi_t = xi_window[t]  # 1D array
+                    xj_t = xj_window[t]  # 1D array
+                    sim = self.evaluate_instant_similarity(xi_t, xj_t, t)
+                    sim_sum += sim
+
+                # Average over timesteps
+                K_avg[i, j] = sim_sum / window_len
+                K_avg[j, i] = K_avg[i, j]  # symmetrize
+
+            # Diagonal = 1 (self-similarity)
+            K_avg[i, i] = 1.0
+
+        # Save and symmetrize just in case
+        K_avg = 0.5 * (K_avg + K_avg.T)
         self.K_train_dict[0] = K_avg
         return K_avg
 
@@ -470,26 +470,36 @@ class QuantumTemporalKernel:
         n_test = len(X_test)
         n_train = len(X_train)
         pairs = list(itertools.product(range(n_test), range(n_train)))
-        K_avg = np.zeros((n_test,n_train),dtype=float)
+        K_avg = np.zeros((n_test, n_train), dtype=float)
+
         for t in tqdm(range(self.length), desc="Generating K_test"):
-            for i,j in pairs:
-                xi = X_test[i][t]
-                yj = X_train[j][t]
-                K_avg[i,j] += self.evaluate_instant_similarity(xi,yj,t)
+            for i, j in pairs:
+                # Usa la lunghezza minima per evitare IndexError
+                t_i = min(t, X_test[i].shape[0]-1)
+                t_j = min(t, X_train[j].shape[0]-1)
+                xi = X_test[i][t_i]
+                yj = X_train[j][t_j]
+                K_avg[i, j] += self.evaluate_instant_similarity(xi, yj, t)
+
         K_avg /= float(self.length)
         self.K_test_dict[0] = K_avg
         return K_avg
+
 
     def generate_K_validation_dict(self, X_train, X_validation):
         n_val = len(X_validation)
         n_train = len(X_train)
         pairs = list(itertools.product(range(n_val), range(n_train)))
-        K_avg = np.zeros((n_val,n_train),dtype=float)
+        K_avg = np.zeros((n_val, n_train), dtype=float)
+
         for t in tqdm(range(self.length), desc="Generating K_validation"):
-            for i,j in pairs:
-                xi = X_validation[i][t]
-                yj = X_train[j][t]
-                K_avg[i,j] += self.evaluate_instant_similarity(xi,yj,t)
+            for i, j in pairs:
+                t_i = min(t, X_validation[i].shape[0]-1)
+                t_j = min(t, X_train[j].shape[0]-1)
+                xi = X_validation[i][t_i]
+                yj = X_train[j][t_j]
+                K_avg[i, j] += self.evaluate_instant_similarity(xi, yj, t)
+
         K_avg /= float(self.length)
         self.K_validation_dict[0] = K_avg
         return K_avg
