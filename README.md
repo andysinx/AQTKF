@@ -1,7 +1,5 @@
 ## 🏭🚨🛠️🧪🚰 Adaptive Quantum Temporal Kernel Framework (AQTKF) for Anomaly Detection in Multidomain Industrial Scenarios 🖥️📊🧠🤖⚛️
 
-## Anomaly Detection in Multidomain Industrial Scenarios
-
 **Adaptive Quantum Temporal Kernel Framework (AQTKF)** is a general-purpose framework for **kernel-based anomaly detection in heterogeneous industrial domains**.
 
 The framework is designed to operate across **different industrial systems and sensing modalities**, and it is validated on three representative datasets:
