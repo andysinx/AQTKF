@@ -105,11 +105,20 @@ This setup ensures that performance differences are **entirely attributable to t
 ├── preprocessing/
 │   └── dataset_preprocessing.ipynb
 ├── src/
-│   ├── bworth_filter.py
-│   ├── main.py
-│   ├── other_kernels.py
-│   ├── preprocessing_data.py
-│   └── qtk.py
+│   ├── skab_code/
+│   │   ├── main.py
+│   │   ├── other_kernels.py
+│   │   ├── preprocessing.py
+│   │   └── qtk.py
+│   ├── hydrogen_code/
+│   │   ├── main_hydro.py
+│   │   └── processing_hydrogen.py
+│   └── cnc_code/
+│       ├── bworth_filter.py
+│       ├── main.py
+│       ├── other_kernels.py
+│       ├── preprocessing_data.py
+│       └── qtk.py
 ├── README.md
 ├── circuit_ansatz.jpg
 ├── cnc_milling.jpg
