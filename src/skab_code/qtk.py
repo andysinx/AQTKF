@@ -15,13 +15,13 @@ import itertools
 import numpy as np
 from tqdm import tqdm
 from scipy.linalg import expm
-from qiskit.circuit.library import Initialize
 
 from qiskit import ClassicalRegister, QuantumCircuit
 from qiskit.quantum_info import Operator, Statevector
 from qiskit_aer import AerSimulator
 from qiskit.circuit.library import EfficientSU2
 from qiskit.circuit import ParameterVector
+from qiskit.circuit.library import StatePreparation
 
 # Sampler import in try/except per compatibilità ambienti
 try:
@@ -234,7 +234,6 @@ class QuantumTemporalKernel:
             # aggiorna full_terms con i nuovi coefficienti
             self.full_terms = [(label,c) for (label,_), c in zip(self.full_terms, coeffs)]
             self.H = H
-            print('H before:', self.H)
             return H
     
     def set_H_coeffs(self, coeffs):
@@ -257,7 +256,6 @@ class QuantumTemporalKernel:
             H += c * op
         self.H = H
     
-
     # --------------------------
     # Parsing pair
     # --------------------------
@@ -303,33 +301,28 @@ class QuantumTemporalKernel:
         elif self.embedding_type == "angle":
             return self.embedding_angle(x_window, t)
         
+    # --------------------------
+    # Amplitude encoding
+    # --------------------------
 
-    # ===========================
-    # Amplitude embedding (nuova)
-    # ===========================
     def embedding_amplitude(self, x_window, t):
-        """
-        Amplitude embedding su n_qubits:
-        - x_window: array-like. Se 2D (time x features) default prende la media temporale.
-                    Se vuoi tutte le entry (flatten temporale) imposta use_mean=False.
-        - t: tempo istante (usato per l'evoluzione Hamiltoniana dopo la preparazione di stato).
-        Restituisce un QuantumCircuit che prepara lo stato amplitude-encoded e poi applica U(t).
-        """
-        qc = QuantumCircuit(self.n_qubits)
-        #assert x is 1D array with length n_qubits
-        x_array = np.array(x_window, dtype=float)
-        assert x_array.ndim == 1, "x_window must be 1D array, corresponding to the features at time t"
-        assert np.all(x_array >= 0), "Amplitude encoding requires non-negative data"
-        #assert len(x_array) <= 2*self.n_qubits, f"We need at least {len(x_array).bit_length()} qubits to encode {len(x_array)} features"
-        x_norm = x_array / np.linalg.norm(x_array)
-        # Initialize richiede vettore di dimensione 2^n
-        qc.initialize(x_norm, range(self.n_qubits)) 
-        # Applica evoluzione Hamiltoniana come negli altri embedding
+
         t_scaled = 2*np.pi*float(t)/max(1,self.length)*self.T
-        #print('t_scaled:',t_scaled)
         U_t = expm(-1j * self.H * t_scaled)
-        #print('U_t:',U_t)
+
+        qc = QuantumCircuit(self.n_qubits)
+
+        # 1) Applica evoluzione Hamiltoniana PRIMA del caricamento
         qc.unitary(Operator(U_t), range(self.n_qubits))
+
+        # 2) Amplitude encoding SENZA reset
+        x_array = np.array(x_window, dtype=float)
+        assert x_array.ndim == 1, "x_window must be 1D array"
+        x_norm = x_array / np.linalg.norm(x_array)
+
+        # sostituisce initialize !!!
+        prep = StatePreparation(x_norm)
+        qc.append(prep, range(self.n_qubits))
 
         return qc
 
@@ -338,15 +331,16 @@ class QuantumTemporalKernel:
     # --------------------------
     def embedding_angle(self, x_window, t):
         qc = QuantumCircuit(self.n_qubits)
+        # Hamiltoniano
+        t_scaled = 2*np.pi*float(t)/max(1,self.length)*self.T
+        #print('t_scaled:', t_scaled)
+        U_t = expm(-1j * self.H * t_scaled)
+        qc.unitary(Operator(U_t), range(self.n_qubits))
         x_array = np.array(x_window, dtype=float)
         assert x_array.ndim == 1, "x_window must be 1D array, corresponding to the features at time t"
         assert len(x_array) <= self.n_qubits, f"We need at least {len(x_array)} qubits to encode {len(x_array)} features"
         for i in range(len(x_array)):
             qc.rx(np.pi*x_array[i], i)
-        # Hamiltoniano
-        t_scaled = 2*np.pi*float(t)/max(1,self.length)*self.T
-        U_t = expm(-1j*self.H*t_scaled)
-        qc.unitary(Operator(U_t), range(self.n_qubits))
         return qc
 
 
@@ -394,6 +388,7 @@ class QuantumTemporalKernel:
     def evaluate_instant_similarity(self, x1, x2, t):
         psi = Statevector(self.embedding(x1, t))
         phi = Statevector(self.embedding(x2, t))
+        #print("Fidelity:", float(np.real(abs(np.vdot(psi.data, phi.data))**2)))
         return float(np.real(abs(np.vdot(psi.data, phi.data))**2))
 
     def evaluate_instant_similarity_sampler(self, x1, x2, t, shots=1024):
@@ -447,8 +442,11 @@ class QuantumTemporalKernel:
 
                 # Take the minimum length of the two windows (or self.length) to avoid IndexError
                 window_len = min(xi_window.shape[0], xj_window.shape[0], self.length)
+                assert window_len == self.length, "Window length must match self.length"
                 # Sum similarity over all timesteps
+                #print('window_len', window_len)
                 for t in range(window_len):
+                    #print(f'COAP_{t}')
                     xi_t = xi_window[t]  # 1D array
                     xj_t = xj_window[t]  # 1D array
                     sim = self.evaluate_instant_similarity(xi_t, xj_t, t)
@@ -467,40 +465,61 @@ class QuantumTemporalKernel:
         return K_avg
 
     def generate_K_test(self, X_train, X_test):
+        """
+        Generate the quantum temporal kernel between X_test and X_train.
+        Returns a (n_test, n_train) kernel matrix.
+        """
         n_test = len(X_test)
         n_train = len(X_train)
-        pairs = list(itertools.product(range(n_test), range(n_train)))
         K_avg = np.zeros((n_test, n_train), dtype=float)
 
-        for t in tqdm(range(self.length), desc="Generating K_test"):
-            for i, j in pairs:
-                # Usa la lunghezza minima per evitare IndexError
-                t_i = min(t, X_test[i].shape[0]-1)
-                t_j = min(t, X_train[j].shape[0]-1)
-                xi = X_test[i][t_i]
-                yj = X_train[j][t_j]
-                K_avg[i, j] += self.evaluate_instant_similarity(xi, yj, t)
+        for i in tqdm(range(n_test), desc="Generating K_test"):
+            xi_window = X_test[i]
+            for j in range(n_train):
+                xj_window = X_train[j]
 
-        K_avg /= float(self.length)
+                # Usa la lunghezza minima per evitare IndexError
+                window_len = min(xi_window.shape[0], xj_window.shape[0], self.length)
+                assert window_len == self.length, "Window length must match self.length"
+                sim_sum = 0.0
+
+                for t in range(window_len):
+                    xi_t = xi_window[t]
+                    xj_t = xj_window[t]
+                    sim_sum += self.evaluate_instant_similarity(xi_t, xj_t, t)
+
+                # media sui timestep
+                K_avg[i, j] = sim_sum / window_len
+
         self.K_test_dict[0] = K_avg
         return K_avg
 
 
     def generate_K_validation_dict(self, X_train, X_validation):
+        """
+        Generate the quantum temporal kernel between X_validation and X_train.
+        Returns a (n_validation, n_train) kernel matrix.
+        """
         n_val = len(X_validation)
         n_train = len(X_train)
-        pairs = list(itertools.product(range(n_val), range(n_train)))
         K_avg = np.zeros((n_val, n_train), dtype=float)
 
-        for t in tqdm(range(self.length), desc="Generating K_validation"):
-            for i, j in pairs:
-                t_i = min(t, X_validation[i].shape[0]-1)
-                t_j = min(t, X_train[j].shape[0]-1)
-                xi = X_validation[i][t_i]
-                yj = X_train[j][t_j]
-                K_avg[i, j] += self.evaluate_instant_similarity(xi, yj, t)
+        for i in tqdm(range(n_val), desc="Generating K_validation"):
+            xi_window = X_validation[i]
+            for j in range(n_train):
+                xj_window = X_train[j]
 
-        K_avg /= float(self.length)
+                window_len = min(xi_window.shape[0], xj_window.shape[0], self.length)
+                assert window_len == self.length, "Window length must match self.length"
+                sim_sum = 0.0
+
+                for t in range(window_len):
+                    xi_t = xi_window[t]
+                    xj_t = xj_window[t]
+                    sim_sum += self.evaluate_instant_similarity(xi_t, xj_t, t)
+
+                K_avg[i, j] = sim_sum / window_len
+
         self.K_validation_dict[0] = K_avg
         return K_avg
 
@@ -509,3 +528,128 @@ class QuantumTemporalKernel:
         self.generate_K_test(X_train,X_test)
         if X_val is not None:
             self.generate_K_validation_dict(X_train,X_val)
+
+
+
+class QuantumKernel:
+    """
+    Quantum Kernel con embedding parametrico R_y + entanglement a cascata.
+    Supporta finestre 2D (window_size, n_features) calcolando media fidelity su tutti i timestep.
+    """
+    def __init__(self, n_qubits=4, feature_order=None, use_noise=False):
+        self.n_qubits = n_qubits
+        self.use_noise = use_noise
+
+        # Mappatura qubit -> feature name
+        self.feature_order = feature_order or [f"Feature_{i+1}" for i in range(n_qubits)]
+
+        # Dizionari per memorizzare kernel calcolati
+        self.K_train_dict = {}
+        self.K_test_dict = {}
+        self.K_validation_dict = {}
+
+    # ===================================
+    # Embedding parametrico R_y + CNOT
+    # ===================================
+    def embedding_r_y_cascade(self, x_t):
+        """
+        Embedding parametrico per singolo timestep (1D array)
+        """
+        x_array = np.array(x_t, dtype=float)
+        n_features = len(x_array)
+        n_qubits = self.n_qubits
+        qc = QuantumCircuit(n_qubits)
+
+        # 1) Hadamard sul primo qubit
+        qc.h(0)
+
+        # 2) Rotazioni R_y iniziali
+        for i in range(min(n_qubits, n_features)):
+            qc.ry(np.pi * x_array[i], i)
+
+        # 3) CNOT a cascata (1->2->3->...)
+        for i in range(n_qubits - 1):
+            qc.cx(i, i + 1)
+
+        # 4) Rotazioni R_y intermedie
+        for i in range(min(n_qubits, n_features)):
+            qc.ry(np.pi * x_array[i] / 2, i)
+
+        # 5) Secondo strato CNOT a cascata inverso (zig-zag)
+        for i in reversed(range(n_qubits - 1)):
+            qc.cx(i, i + 1)
+
+        # 6) Ultime rotazioni R_y
+        for i in range(min(n_qubits, n_features)):
+            qc.ry(np.pi * x_array[i] / 3, i)
+
+        return qc
+
+    # ===================================
+    # Similarità tra due finestre
+    # ===================================
+    def evaluate_similarity(self, x_window1, x_window2):
+        """
+        Fidelity media tra gli embedding di due finestre 2D (window_size, n_features)
+        """
+        window_len = min(x_window1.shape[0], x_window2.shape[0])
+        sim_sum = 0.0
+        for t in range(window_len):
+            psi = Statevector(self.embedding_r_y_cascade(x_window1[t]))
+            phi = Statevector(self.embedding_r_y_cascade(x_window2[t]))
+            sim_sum += float(np.real(abs(np.vdot(psi.data, phi.data))**2))
+        return sim_sum / window_len
+
+    # ===================================
+    # Kernel matrix
+    # ===================================
+    def generate_K_train(self, X_train):
+        n_samples = len(X_train)
+        K = np.zeros((n_samples, n_samples), dtype=float)
+
+        for i in tqdm(range(n_samples), desc="Generating K_train"):
+            xi = X_train[i]
+            for j in range(i, n_samples):
+                xj = X_train[j]
+                sim = self.evaluate_similarity(xi, xj)
+                K[i, j] = sim
+                K[j, i] = sim  # simmetrico
+            K[i, i] = 1.0
+
+        self.K_train_dict[0] = K
+        return K
+
+    def generate_K_test(self, X_train, X_test):
+        n_test = len(X_test)
+        n_train = len(X_train)
+        K = np.zeros((n_test, n_train), dtype=float)
+
+        for i in tqdm(range(n_test), desc="Generating K_test"):
+            xi = X_test[i]
+            for j in range(n_train):
+                xj = X_train[j]
+                K[i, j] = self.evaluate_similarity(xi, xj)
+        self.K_test_dict[0] = K
+        return K
+
+    def generate_K_validation(self, X_train, X_val):
+        n_val = len(X_val)
+        n_train = len(X_train)
+        K = np.zeros((n_val, n_train), dtype=float)
+
+        for i in tqdm(range(n_val), desc="Generating K_validation"):
+            xi = X_val[i]
+            for j in range(n_train):
+                xj = X_train[j]
+                K[i, j] = self.evaluate_similarity(xi, xj)
+        self.K_validation_dict[0] = K
+        return K
+
+    def compute_kernels(self, X_train, X_test, X_val=None):
+        self.generate_K_train(X_train)
+        self.generate_K_test(X_train, X_test)
+        if X_val is not None:
+            self.generate_K_validation(X_train, X_val)
+
+
+

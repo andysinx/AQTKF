@@ -63,23 +63,22 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
         param_bounds = (-0.5, 0.5)
     
     # --- salva kernel iniziale ---
-    '''K_train_initial = qtk.generate_K_train(X_train)
-    print("K_train_old",K_train_initial)
-    np.save(os.path.join(save_dir, f"K_train_initial_{optimizer}.npy"), K_train_initial)'''
+    K_train_initial = qtk.generate_K_train(X_train)
+    np.save(os.path.join(save_dir, f"K_train_initial_{optimizer}.npy"), K_train_initial)
 
     def cost_function(params):
         # Update params
-        old_coeffs = [c for (_, c) in qtk.full_terms]
-        print("old_coeffs",old_coeffs)
-        K1 = qtk.generate_K_train(X_train)
-        print("K_train_old:", K1)
+        #old_coeffs = [c for (_, c) in qtk.full_terms]
+        #print("old_coeffs",old_coeffs)
+        #K1 = qtk.generate_K_train(X_train)
+        #print("K_train_old:", K1)
         qtk.set_H_coeffs(params)
-        new_coeffs_list = [c for (_, c) in qtk.full_terms]
-        print("new_coeffs_list",new_coeffs_list)
-        diff = np.array(new_coeffs_list) - np.array(old_coeffs)
+        #new_coeffs_list = [c for (_, c) in qtk.full_terms]
+        #print("new_coeffs_list",new_coeffs_list)
+        #diff = np.array(new_coeffs_list) - np.array(old_coeffs)
         #print("Diff coeffs:", diff)
         K_train = qtk.generate_K_train(X_train)
-        print("K_train_new:", K_train)
+        #print("K_train_new:", K_train)
         #print("Diff kernel:", np.linalg.norm(K_train - K1, 'fro'))
 
         # Target kernel (cluster intra-normal / anom)
@@ -132,7 +131,6 @@ def optimize_qtk(qtk: QuantumTemporalKernel,
     # --- ciclo sulle run ---
     best_solution_overall = None
     best_fun_overall = np.inf
-
     for run in tqdm(range(1, n_runs+1), desc=f"{optimizer} runs"):
         # Ogni ottimizzatore dovrebbe restituire anche la history dei migliori fitness per generazione
         res = global_search.optimize(problem, pop_size=pop_size, max_gen=max_gen, verbose=True, seed=42*run)
@@ -256,7 +254,7 @@ def kernel_diagnostics(K, optimizer='DE', save_prefix="images_1/kernel_diag"):
     return K_norm
 
 
-# ===================================
+'''# ===================================
 # 4️⃣ Preprocessing
 # ===================================
 def normalize_dataframe(df, exclude_cols=["anomaly", "changepoint"]):
@@ -264,7 +262,7 @@ def normalize_dataframe(df, exclude_cols=["anomaly", "changepoint"]):
     feature_cols = [c for c in df.columns if c not in exclude_cols]
     df_norm = df.copy()
     df_norm[feature_cols] = scaler.fit_transform(df[feature_cols])
-    return df_norm
+    return df_norm'''
 
 def create_windows(df, window_size=900, overlap_size=30):
     windows = []
@@ -294,26 +292,12 @@ def create_windows(df, window_size=900, overlap_size=30):
 
     return windows 
 
-def flatten_windows(windows, window_size=900):
-    X = []
-    for w in windows:
-        arr = w.drop(columns=["anomaly", "changepoint"], errors="ignore").values
-        # taglia o pad per avere sempre shape (window_size, n_features)
-        if arr.shape[0] > window_size:
-            arr = arr[:window_size, :]
-        elif arr.shape[0] < window_size:
-            # pad con l'ultimo valore disponibile
-            pad_len = window_size - arr.shape[0]
-            pad = np.tile(arr[-1, :], (pad_len, 1))
-            arr = np.vstack([arr, pad])
-        X.append(arr.flatten())
-    return np.array(X)
 
 
 # ===================================
 # 5️⃣ One-Class SVM Quantum/Classical
 # ===================================
-def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true, nu_min=0.01, nu_max=0.2, n_nu=10):
+def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true, y_true_train, nu_min=0.01, nu_max=0.2, n_nu=10):
     """
     Train One-Class SVM with Quantum Temporal Kernel using precomputed kernel.
     Grid search on nu to select the value that minimizes deviance (std) of scores on training set.
@@ -336,21 +320,20 @@ def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true
     from sklearn.svm import OneClassSVM
     from sklearn.metrics import roc_auc_score
     import numpy as np
-
     # --- Griglia esponenziale di nu ---
     nus = np.logspace(np.log10(nu_min), np.log10(nu_max), n_nu)
 
-    best_std = np.inf
+    best_metric = -np.inf
     best_nu = nus[0]
     oc_best = None
 
     for nu in nus:
         oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
-        scores_train = oc.decision_function(K_train)
-        score_std = np.std(scores_train)
+        y_pred_train = oc.predict(K_train)
+        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
 
-        if score_std < best_std:
-            best_std = score_std
+        if  metric > best_metric:
+            best_metric = metric
             best_nu = nu
             oc_best = oc
 
@@ -365,7 +348,7 @@ def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true
     return oc_best, scores_test, best_nu, auc
 
 
-def run_oneclass_svm_classical(X_train, X_test, y_true, kernel="rbf", nu_min=0.01, nu_max=0.2, n_nu=10, gamma="scale"):
+def run_oneclass_svm_classical(X_train, X_test, y_true, y_true_train, kernel="rbf", nu_min=0.01, nu_max=0.2, n_nu=10, gamma="scale"):
     """
     Train a One-Class SVM with a classical kernel (RBF, linear, poly, etc.) using an exponential grid search over nu.
     Selects the nu value that minimizes the standard deviation of the training decision scores for more stable results.
@@ -388,17 +371,17 @@ def run_oneclass_svm_classical(X_train, X_test, y_true, kernel="rbf", nu_min=0.0
 
     # Generate nu values exponentially spaced
     nus = np.logspace(np.log10(nu_min), np.log10(nu_max), n_nu)
-    best_std = np.inf
+    best_metric = -np.inf
     best_nu = nus[0]
     oc_best = None
 
     # Grid search over nu
     for nu in nus:
         oc = OneClassSVM(kernel=kernel, nu=nu, gamma=gamma).fit(X_train)
-        scores_train = oc.decision_function(X_train)
-        score_std = np.std(scores_train)
-        if score_std < best_std:
-            best_std = score_std
+        y_pred_train = oc.predict(X_train)
+        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
+        if  metric > best_metric:
+            best_metric = metric
             best_nu = nu
             oc_best = oc
 
@@ -412,220 +395,355 @@ def run_oneclass_svm_classical(X_train, X_test, y_true, kernel="rbf", nu_min=0.0
 
     return oc_best, scores_test, best_nu, auc
 
+def create_unified_dataset(anomaly_free_df, valve1_df, valve2_df, other_df):
+    # --- Dati normali ---
+    normal_df = anomaly_free_df.copy()
+    normal_df["label"] = 1
 
-def analyze_and_save_kernel(K_train_opt, n_train_norm, n_train_anom, optimizer='DE', output_dir="saved_data"):
-    """
-        Analyze and save the optimized kernel matrix, the target matrix, and the Frobenius difference.
+    # Funzione helper per unire liste di dataframe e trasformare anomaly -> label
+    def concat_anomalous(df_list):
+        dfs = []
+        for df in df_list:
+            df_copy = df.drop(columns=["changepoint"], errors="ignore").copy()
+            df_copy["label"] = df_copy["anomaly"].apply(lambda x: -1 if x == 1 else 1)
+            df_copy = df_copy.drop(columns=["anomaly"], errors="ignore")
+            dfs.append(df_copy)
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
+        else:
+            return pd.DataFrame()
 
-        Parameters
-        ----------
-        K_train_opt : np.ndarray
-            Optimized kernel matrix.
-        n_train_norm : int
-            Number of normal windows in the training set.
-        n_train_anom : int
-            Number of anomalous windows in the training set.
-        output_dir : str
-            Directory where the images and matrices will be saved.
-    """
-    # Crea K_target
-    K_target = np.zeros_like(K_train_opt)
-    K_target[:n_train_norm, :n_train_norm] = 1
-    K_target[n_train_norm:n_train_norm + n_train_anom, n_train_norm:n_train_norm + n_train_anom] = 1
+    # --- Dati anomali ---
+    valve1_concat = concat_anomalous(valve1_df)
+    valve2_concat = concat_anomalous(valve2_df)
+    other_concat = concat_anomalous(other_df)
 
-    # Distanza Frobenius
-    dist_matrix = np.abs(K_train_opt - K_target)
-    fro_res = np.linalg.norm(dist_matrix, 'fro')
-    print(f"📐 Frobenius distance residual K_opt vs K_target = {fro_res:.4f}")
+    # --- Dataset finale ---
+    unified_df = pd.concat([normal_df, valve1_concat, valve2_concat, other_concat], ignore_index=True)
 
-    # Crea cartella output
-    os.makedirs(output_dir, exist_ok=True)
+    print(f"✅ Unified dataset shape: {unified_df.shape}")
+    print(f" - Normal samples: {len(normal_df)}")
+    print(f" - Valve1 samples: {len(valve1_concat)}")
+    print(f" - Valve2 samples: {len(valve2_concat)}")
+    print(f" - Other samples: {len(other_concat)}")
+    print(f" - Total anomalous samples: {(unified_df['label'] == -1).sum()}")
 
-    # Salva matrici
-    np.save(os.path.join(output_dir, f"K_train_opt_{optimizer}.npy"), K_train_opt)
-    np.save(os.path.join(output_dir, f"K_target_{optimizer}.npy"), K_target)
-    np.save(os.path.join(output_dir, f"K_diff_{optimizer}.npy"), dist_matrix)
+    return unified_df
 
-    # Funzione interna per plotting
-    def plot_and_save(matrix, title, filename, cmap='viridis'):
-        plt.figure(figsize=(5, 5))
-        plt.imshow(matrix, cmap=cmap)
-        plt.colorbar()
-        plt.title(title)
-        plt.tight_layout()
-        plt.savefig(f"images_1/{filename}", dpi=300)
-        plt.close()
 
-    # Plot delle matrici
-    plot_and_save(K_train_opt, "K_train_opt", f"K_train_opt_{optimizer}.pdf", cmap='viridis')
-    plot_and_save(K_target, "K_target", f"K_{optimizer}_target.pdf", cmap='viridis')
-    plot_and_save(dist_matrix, "|K_train_opt - K_target|", f"K_{optimizer}_diff.pdf", cmap='magma')
+def prepare_windows_for_qtk(unified_df, window_size=100, overlap_size=40,
+                            n_train_norm=9, n_train_anom=2,
+                            n_final_norm=45, n_final_anom=10,
+                            n_test_norm=45, n_test_anom=10,
+                            seed=42):
+    rng = np.random.default_rng(seed)
 
-    print(f"✅ Kernel and target saved in {output_dir}/")
+    # --------------------------
+    # Separiamo normali e anomali
+    # --------------------------
+    normal_df = unified_df[unified_df['label'] == 1].reset_index(drop=True)
+    anomalous_df = unified_df[unified_df['label'] == -1].reset_index(drop=True)
+
+    # --------------------------
+    # Creazione finestre
+    # --------------------------
+    windows_normal = [w for w in create_windows(normal_df, window_size, overlap_size) if len(w) == window_size]
+    windows_anom = [w for w in create_windows(anomalous_df, window_size, overlap_size) if len(w) == window_size]
+
+    print(f"Available normal windows: {len(windows_normal)}, anomalous windows: {len(windows_anom)}")
+
+    # --------------------------
+    # 1️⃣ X_train piccolo (ottimizzazione)
+    # --------------------------
+    X_train = windows_normal[:n_train_norm] + windows_anom[:n_train_anom]
+    y_train = np.array([1]*n_train_norm + [-1]*n_train_anom)
+
+    # --------------------------
+    # 2️⃣ X_train_final (mutualmente esclusivo da X_train)
+    # --------------------------
+    start_norm_final = n_train_norm
+    start_anom_final = n_train_anom
+    X_train_final = windows_normal[start_norm_final:start_norm_final+n_final_norm] + \
+                    windows_anom[start_anom_final:start_anom_final+n_final_anom]
+    y_train_final = np.array([1]*n_final_norm + [-1]*n_final_anom)
+
+    # --------------------------
+    # 3️⃣ X_test (mutualmente esclusivo da X_train e X_train_final)
+    # --------------------------
+    start_norm_test = start_norm_final + n_final_norm
+    start_anom_test = start_anom_final + n_final_anom
+    X_test = windows_normal[start_norm_test:start_norm_test+n_test_norm] + \
+             windows_anom[start_anom_test:start_anom_test+n_test_anom]
+    y_test = np.array([1]*n_test_norm + [-1]*n_test_anom)
+
+    # --------------------------
+    # Shuffle train, train_final e test
+    # --------------------------
+    def shuffle_windows(X, y):
+        indices = rng.permutation(len(X))
+        return [X[i] for i in indices], y[indices]
+
+    X_train, y_train = shuffle_windows(X_train, y_train)
+    X_train_final, y_train_final = shuffle_windows(X_train_final, y_train_final)
+    X_test, y_test = shuffle_windows(X_test, y_test)
+
+    # --------------------------
+    # Flatten windows
+    # --------------------------
+    def flatten_windows(X):
+        return [np.array([timestep.flatten() for timestep in w.drop(columns=["anomaly","label"], errors="ignore").to_numpy()]) for w in X]
+
+    X_train = flatten_windows(X_train)
+    X_train_final = flatten_windows(X_train_final)
+    X_test = flatten_windows(X_test)
+
+    print(f"X_train: {len(X_train)} windows, X_train_final: {len(X_train_final)} windows, X_test: {len(X_test)} windows")
+
+    return X_train, y_train, X_train_final, y_train_final, X_test, y_test
+
+
 
 # ===================================
 # 6️⃣ MAIN
 # ===================================
-'''def main():
+def main():
     print("=== ⚙️ START QUANTUM TEMPORAL KERNEL PIPELINE ===")
 
     # --------------------------
     # Caricamento dataset
     # --------------------------
     valve1_df, valve2_df, other_df, anomaly_free_df = load_skab_by_folder("skab_data/")
-    anomaly_free_df = normalize_dataframe(anomaly_free_df)
-    valve1_df = [normalize_dataframe(df) for df in valve1_df]
-    valve1_concat = pd.concat(valve1_df, ignore_index=True)
+    print(f"✅ Loaded datasets: valve1={len(valve1_df)}, valve2={len(valve2_df)}, other={len(other_df)}, anomaly_free={len(anomaly_free_df)}")
+    dataset = create_unified_dataset(anomaly_free_df, valve1_df, valve2_df, other_df)
+    print(dataset)
 
     # --------------------------
-    # Creazione finestre
+    # Statistiche e dimensioni
+    # --------------------------
+    print("\n🔹 Unified dataset info:")
+    print(dataset.info())
+    print("\n🔹 Label distribution:")
+    print(dataset['label'].value_counts())
+    n_rows, n_cols = dataset.shape
+    print(f"\nTotal samples: {n_rows}, Features (incl. label): {n_cols}")
+
+    # --------------------------
+    # Parametri finestra e creazione train/test per QTK
     # --------------------------
     window_size = 100
-    overlap_size = 40
-    windows_af = create_windows(anomaly_free_df, window_size=window_size, overlap_size=overlap_size)
-    print(f"Number of normal windows generated: {len(windows_af)}")
+    n_train_norm=12
+    n_train_anom=3
+    X_train, y_train, X_test, y_test, X_train_final, y_train_final = prepare_windows_for_qtk(dataset,n_train_norm=n_train_norm,n_train_anom=n_train_anom)
 
-    windows_v1_all = create_windows(valve1_concat, window_size=window_size, overlap_size=overlap_size)
-    windows_v1_anom = [w for w in windows_v1_all if "anomaly" in w.columns and w["anomaly"].sum() > 0]
-    print(f"Number of anomalous windows generated: {len(windows_v1_anom)}")
-
-    # --------------------------
-    # Selezione train/test
-    # --------------------------
-    n_train = 8  # totale per l'ottimizzazione
-    n_train_norm = 6
-    n_train_anom = 2
-
-    train_windows = windows_af[:n_train_norm] + windows_v1_anom[:n_train_anom]
-    rng = np.random.default_rng(seed=42)
-    indices = rng.permutation(len(train_windows))
-    train_windows = [train_windows[i] for i in indices]
-
-
-    print(f"✅ Train windows: {len(train_windows)}")
-
-    # Flatten windows
-    X_train = [w.drop(columns=["anomaly", "changepoint"], errors="ignore").to_numpy() 
-                    for w in train_windows]
+    print(f"\nPrepared windows -> X_train: {len(X_train)}, X_test: {len(X_test)}")
+    # labels for SVM functions
+    y_true_test = np.array(y_test)
+    y_final_train = np.array(y_train_final)
 
     # --------------------------
-    # Quantum Temporal Kernel
+    # Quantum Temporal Kernel - init
     # --------------------------
-    print("\n⚛️ Start Quantum Temporal Kernel Experiments...")
-    start_qtk = time.time()
-    qtk = QuantumTemporalKernel(n_qubits=3, L=10, embedding_type="amplitude", n_norm=n_train_norm, n_anom=n_train_anom )
-    end_qtk = time.time()
-    print(f"🕒 Initializing time for QTK: {end_qtk - start_qtk:.2f}s")
+    for x in range(0,1): #1,20
+        print(f'RUN {x}')
+        print("\n⚛️ Start Quantum Temporal Kernel Experiments...")
+        start_qtk = time.time()
+        qtk = QuantumTemporalKernel(n_qubits=3, L=window_size, embedding_type="amplitude", n_norm=n_train_norm, n_anom=n_train_anom)
+        end_qtk = time.time()
+        print(f"🕒 Initializing time for QTK: {end_qtk - start_qtk:.2f}s")
+
+        # --------------------------
+        # EVOVAQ optimization (opzionale)
+        # --------------------------
+        print("\n🧪 EVOVAQ optimization on QTK (opzionale)...")
+        start_evovaq = time.time()
+
+        optimizer = 'CGA'  # impostare "GA", "DE","PSO","BBBC","CGA" per eseguire l'ottimizzazione
+        K_train_final = None
+
+        if optimizer != 'WITHOUT_OPTIMIZATION':
+            best_sol, history, K_train_final = optimize_qtk(
+                qtk=qtk,
+                X_train=X_train,
+                optimizer=optimizer,
+                n_runs=5,
+                pop_size=20,
+                max_gen=50,
+                param_bounds=(-0.5, 0.5),
+                save_dir="./qtk_evovaq_results/"
+            )
+            print(best_sol)
+            print(history)
+            print("✅ EVOVAQ finished. Best solution saved.")
+        else:
+            print("🔸 Skipping EVOVAQ (optimizer='WITHOUT_OPTIMIZATION'). Will generate K_train from current QTK parameters.")
+
+        end_evovaq = time.time()
+        print(f"🕒 Total time EVOVAQ block: {end_evovaq - start_evovaq:.2f}s")
+
+        # --------------------------
+        # Kernel generation (train già fornito dall'ottimizzatore se presente)
+        # --------------------------
+        
+        K_train_final = qtk.generate_K_train(X_train_final)
+        # genera K_test usando X_train e X_test (dipende dall'implementazione di qtk)
+        # qui usiamo la firma qtk.generate_K_test(X_train, X_test) che è quella più comune nel repo
+        K_test_final = qtk.generate_K_test(X_train_final, X_test)
+        print(K_test_final)
+        # eventualmente normalizza/diagnostica il kernel
+        try:
+            K_train_norm = kernel_diagnostics(K_train_final, optimizer=optimizer)
+        except Exception:
+            # se kernel_diagnostics non restituisce un kernel normalizzato, teniamo K_train_final
+            K_train_norm = K_train_final
+
+        # --------------------------
+        # One-Class SVM Quantum
+        # --------------------------
+        print("\n🔮 Quantum One-Class SVM...")
+        oc_qtk, scores_qtk, best_nu_qtk, _ = run_oneclass_svm_quantum(qtk, K_train_norm, K_test_final, y_true_test, y_final_train)
+        y_pred_qtk = oc_qtk.predict(K_test_final)
+
+        compute_metrics("Quantum Evolutionary Temporal", y_true_test, y_pred_qtk, scores_qtk)
+        plot_scores(scores_normal=scores_qtk[y_true_test == 1], scores_anom=scores_qtk[y_true_test == -1],
+                    name="QuantumTemporal_EVOVAQ", nu=best_nu_qtk if 'best_nu_qtk' in locals() else 0.05)
+
+        # --------------------------
+        # Classical Kernels
+        # --------------------------
+        print("\n🧠 Training and evaluation of One-Class SVM (classical kernels)...")
+        kernel_dict = {
+            "Linear": "linear",
+            "Polynomial": "poly",
+            "Sigmoid": "sigmoid",
+            "RBF": "rbf",
+            "Cosine": cosine_kernel,
+            "Laplacian": laplacian_kernel,
+            "Exponential": exponential_kernel,
+            "MexicanHat": wavelet_kernel
+        }
+
+        # Prepara versioni numpy flat (non sovrascrivere X_train/X_test originali)
+        X_train_arr = np.array(X_train_final)
+        X_test_arr = np.array(X_test)
+
+        if X_train_arr.ndim == 3:
+            X_train_flat = X_train_arr.reshape(X_train_arr.shape[0], -1)
+        else:
+            X_train_flat = X_train_arr
+
+        if X_test_arr.ndim == 3:
+            X_test_flat = X_test_arr.reshape(X_test_arr.shape[0], -1)
+        else:
+            X_test_flat = X_test_arr
+
+        # loop sui kernel classici
+        for name, kernel in kernel_dict.items():
+            print(f"\n--- {name} Kernel ---")
+            start_kernel = time.time()
+
+            oc, scores, best_nu, _ = run_oneclass_svm_classical(
+                X_train_flat, X_test_flat, y_true_test, y_final_train, kernel=kernel, nu_min=0.01, nu_max=0.2, n_nu=10
+            )
+            print("BEST NU: ", best_nu)
+            y_pred = oc.predict(X_test_flat)
+
+            compute_metrics(name, y_true_test, y_pred, scores)
+            plot_scores(scores_normal=scores[y_true_test == 1], scores_anom=scores[y_true_test == -1], name=name)
+
+            print(f"Time elapsed ({name}): {time.time() - start_kernel:.2f}s")
+
+        print("\n=== ✅ COMPLETED PIPELINE ===")
+
+
+def run_oneclass_svm_quantum_std(qk: QuantumKernel, K_train, K_test, y_true, y_true_train, nu_min=0.01, nu_max=0.2, n_nu=10):
+    nus = np.logspace(np.log10(nu_min), np.log10(nu_max), n_nu)
+    best_metric = -np.inf
+    best_nu = nus[0]
+    oc_best = None
+
+    for nu in nus:
+        oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
+        y_pred_train = oc.predict(K_train)
+        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
+        if metric > best_metric:
+            best_metric = metric
+            best_nu = nu
+            oc_best = oc
+
+    scores_test = oc_best.decision_function(K_test)
+    auc = roc_auc_score((y_true == -1).astype(int), -scores_test)  # invert per allineamento
+
+    print("\n⚛️ One-Class SVM Quantum Kernel (precomputed)")
+    print(f"🔹 Selected nu: {best_nu:.5f}")
+    print(f"🚀 Test AUC: {auc:.4f}")
+
+    return oc_best, scores_test, best_nu, auc
+
+
+
+def main1():
+    print("=== ⚙️ START QUANTUM KERNEL PIPELINE ===")
 
     # --------------------------
-    # EVOVAQ optimization
+    # Caricamento dataset
     # --------------------------
-    print("\n🧪 Start EVOVAQ optimization on QTK...")
-    start_evovaq = time.time()
-    optimizer='GA'
-    best_sol = optimize_qtk(qtk, X_train,
-                            optimizer=optimizer,
-                            n_runs=5,
-                            pop_size=20,    #Commento: tutti con nruns=5,pop_size=20,maxgen=10 mentre CGA con 2,20,2
-                            max_gen=5,
-                            param_bounds=(-0.5, 0.5),
-                            save_dir="./qtk_evovaq_results/")
-    end_evovaq = time.time()
-    print(f"🕒 Total time EVOVAQ: {end_evovaq - start_evovaq:.2f}s")
-    print("✅ Optimal Parameter founded")
+    valve1_df, valve2_df, other_df, anomaly_free_df = load_skab_by_folder("skab_data/")
+    dataset = create_unified_dataset(anomaly_free_df, valve1_df, valve2_df, other_df)
 
-
-     # --------------------------
-    # Selezione train/test
     # --------------------------
-    n_train = 70
-    n_test_norm = 30
-    n_test_anom_2 = 10
+    # Preparazione finestra e train/test
+    # --------------------------
+    window_size = 100
+    n_train_norm = 12
+    n_train_anom = 3
+    X_train, y_train, X_test, y_test, X_train_final, y_train_final = prepare_windows_for_qtk(
+        dataset, n_train_norm=n_train_norm, n_train_anom=n_train_anom
+    )
 
-    train_windows = windows_af[:n_train]
-    test_windows_norm = windows_af[n_train:n_train + n_test_norm]
-    test_windows_anom = windows_v1_anom[n_train_anom:n_test_anom_2]
+    y_true_test = np.array(y_test)
+    y_final_train = np.array(y_train_final)
 
-    # Combina e mescola le finestre di test
-    X_test_windows = test_windows_norm + test_windows_anom
-    y_test = np.array([0]*len(test_windows_norm) + [1]*len(test_windows_anom))
-    rng = np.random.default_rng(seed=42)
-    indices = rng.permutation(len(X_test_windows))
-    X_test_windows = [X_test_windows[i] for i in indices]
-    y_test = y_test[indices]
+    # --------------------------
+    # Quantum Kernel - init
+    # --------------------------
+    print("\n⚛️ Initializing Quantum Kernel...")
+    start_qk = time.time()
+    n_qubits = X_train_final[0].shape[1]
+    qk = QuantumKernel(n_qubits=n_qubits)
+    end_qk = time.time()
+    print(f"🕒 Initialization time: {end_qk - start_qk:.2f}s")
 
-    print(f"✅ Train windows: {len(train_windows)}")
-    print(f"✅ Test windows: {len(X_test_windows)} = {sum(y_test==0)} normali + {sum(y_test==1)} anomale")
+    # --------------------------
+    # Generazione kernel
+    # --------------------------
+    print("\n🔹 Generating Quantum Kernel matrices...")
+    start_kernel = time.time()
+    K_train = qk.generate_K_train(X_train_final)
+    K_test = qk.generate_K_test(X_train_final, X_test)
+    end_kernel = time.time()
+    print(f"🕒 Kernel generation time: {end_kernel - start_kernel:.2f}s")
 
-    X_train = flatten_windows(train_windows)
-    X_test = flatten_windows(X_test_windows)
-    y_true_bin = np.where(y_test == 1, -1, 1)  # 1=normale, -1=anomalia
-
-    # Rigenera kernel con parametri ottimizzati
-    print("\n⚛️ Generation of optimized kernel...")
-    K_train_opt = qtk.generate_K_train(X_train)
-    K_test_opt = qtk.generate_K_test(X_train, X_test)
-    K_train_norm = kernel_diagnostics(K_train_opt, optimizer=optimizer)
-    analyze_and_save_kernel(K_train_opt, n_train_norm, n_train_anom, optimizer=optimizer)
     # --------------------------
     # One-Class SVM Quantum
     # --------------------------
-    oc_qtk, scores_qtk, best_nu, auc = run_oneclass_svm_quantum(qtk, K_train_norm, K_test_opt, y_true_bin)
-    y_pred_qtk = oc_qtk.predict(K_test_opt)
+    print("\n🔮 Running Quantum One-Class SVM...")
+    oc_qk, scores_qk, best_nu_qk, _ = run_oneclass_svm_quantum_std(
+        qk, K_train, K_test, y_true_test, y_final_train
+    )
+    y_pred_qk = oc_qk.predict(K_test)
 
-    compute_metrics("Quantum Evolutionary Temporal Kernel", y_true_bin, y_pred_qtk, scores_qtk)
-    plot_scores(scores_normal=scores_qtk[y_true_bin == 1],
-                scores_anom=scores_qtk[y_true_bin == -1],
-                name="QuantumTemporal_EVOVAQ", nu=0.05)
+    compute_metrics("Quantum Kernel", y_true_test, y_pred_qk, scores_qk)
+    plot_scores(
+        scores_normal=scores_qk[y_true_test == 1],
+        scores_anom=scores_qk[y_true_test == -1],
+        name="QuantumKernel",
+        nu=best_nu_qk
+    )
 
-    # --------------------------
-    # Classical Kernels
-    # --------------------------
-    kernel_dict = {
-        "Linear": "linear",
-        "Polynomial": "poly",
-        "Sigmoid": "sigmoid",
-        "RBF": "rbf",
-        "Cosine": cosine_kernel,
-        "Laplacian": laplacian_kernel,
-        "Exponential": exponential_kernel,
-        "MexicanHat": wavelet_kernel
-    }
+    print("\n=== ✅ COMPLETED QUANTUM KERNEL PIPELINE ===")
 
-    print("\n🧠 Training and evaluation of One-Class SVM (classical kernels)...")
-    for name, kernel in kernel_dict.items():
-        print(f"\n--- {name} Kernel ---")
-        start = time.time()
-        oc, scores, best_nu, _ = run_oneclass_svm_classical(
-            X_train, X_test, y_true_bin, kernel=kernel, nu_min=0.01, nu_max=0.2, n_nu=10
-        )
-        print("BEST NU: ", best_nu)
-        y_pred = oc.predict(X_test)
-        compute_metrics(name, y_true_bin, y_pred, scores)
-        plot_scores(scores_normal=scores[y_true_bin == 1],
-                    scores_anom=scores[y_true_bin == -1],
-                    name=name)
-    print(f"Time elapsed: {time.time() - start:.2f}s")
-
-    print("\n=== ✅ COMPLETED PIPELINE ===")'''
-
-
-def main():
-    np.random.seed(100)
-    X_fake = [np.random.randn(10, 8) for _ in range(4)] # 4 finestre fake
-    X_fake_scaled = [(w - w.min()) / (w.max() - w.min()) for w in X_fake]
-    qtk = QuantumTemporalKernel(n_qubits=3, L=5, embedding_type="amplitude", n_norm=3, n_anom=1)
-    K_train = qtk.generate_K_train(X_fake_scaled)
-    print('K_train before optimization:',K_train)
-    print('H after', qtk.H)
-    coeff = np.random.uniform(-2,2,len(qtk.full_terms))
-    print('old coeffs:',[c for (_,c) in qtk.full_terms])
-    print('New coeffs:',coeff)
-    qtk.set_H_coeffs(coeff)
-    K_train = qtk.generate_K_train(X_fake_scaled)
-    print('K_train afteyr optimization:',K_train)
-    print(K_train)
 # Entry point
 if __name__ == "__main__":
     main()
+    main1()
 
