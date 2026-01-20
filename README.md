@@ -33,7 +33,6 @@ AQTKF is composed of the following elements:
   Use of **Quantum Temporal Kernels (QTK)** to embed multivariate temporal windows into a quantum feature space, explicitly encoding temporal dynamics within a parameterized Hamiltonian.
 
 <p align="center">
-  <img src="./cnc_milling.jpg" width="45%">
   <img src="./circuit_ansatz.jpg" width="45%">
 </p>
 
