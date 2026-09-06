@@ -328,14 +328,19 @@ def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true
     oc_best = None
 
     for nu in nus:
-        oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
-        y_pred_train = oc.predict(K_train)
-        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
-
-        if  metric > best_metric:
-            best_metric = metric
-            best_nu = nu
-            oc_best = oc
+      oc = OneClassSVM(
+          kernel=kernel,
+          nu=nu,
+          gamma=gamma
+      ).fit(X_train)
+  
+      scores_train = oc.decision_function(X_train)
+      metric = np.mean(scores_train)
+  
+      if metric > best_metric:
+          best_metric = metric
+          best_nu = nu
+          oc_best = oc
 
     # --- Valutazione sul test set ---
     scores_test = oc_best.decision_function(K_test)
@@ -433,7 +438,7 @@ def create_unified_dataset(anomaly_free_df, valve1_df, valve2_df, other_df):
 
 def prepare_windows_for_qtk(unified_df, window_size=100, overlap_size=40,
                             n_train_norm=9, n_train_anom=2,
-                            n_final_norm=45, n_final_anom=10,
+                            n_final_norm=45,
                             n_test_norm=45, n_test_anom=10,
                             seed=42):
     rng = np.random.default_rng(seed)
@@ -459,22 +464,31 @@ def prepare_windows_for_qtk(unified_df, window_size=100, overlap_size=40,
     y_train = np.array([1]*n_train_norm + [-1]*n_train_anom)
 
     # --------------------------
-    # 2️⃣ X_train_final (mutualmente esclusivo da X_train)
+    # 2️⃣ X_train_final: SOLO NORMALI per One-Class SVM
     # --------------------------
     start_norm_final = n_train_norm
-    start_anom_final = n_train_anom
-    X_train_final = windows_normal[start_norm_final:start_norm_final+n_final_norm] + \
-                    windows_anom[start_anom_final:start_anom_final+n_final_anom]
-    y_train_final = np.array([1]*n_final_norm + [-1]*n_final_anom)
+  
+    X_train_final = windows_normal[
+        start_norm_final:start_norm_final + n_final_norm
+    ]
+  
+    y_train_final = np.ones(len(X_train_final), dtype=int)
 
     # --------------------------
-    # 3️⃣ X_test (mutualmente esclusivo da X_train e X_train_final)
+    # 3️⃣ X_test
     # --------------------------
     start_norm_test = start_norm_final + n_final_norm
-    start_anom_test = start_anom_final + n_final_anom
-    X_test = windows_normal[start_norm_test:start_norm_test+n_test_norm] + \
-             windows_anom[start_anom_test:start_anom_test+n_test_anom]
-    y_test = np.array([1]*n_test_norm + [-1]*n_test_anom)
+    start_anom_test = n_train_anom
+    
+    X_test = (
+        windows_normal[start_norm_test:start_norm_test + n_test_norm]
+        + windows_anom[start_anom_test:start_anom_test + n_test_anom]
+    )
+    
+    y_test = np.array(
+        [1] * len(windows_normal[start_norm_test:start_norm_test + n_test_norm])
+        + [-1] * len(windows_anom[start_anom_test:start_anom_test + n_test_anom])
+    )
 
     # --------------------------
     # Shuffle train, train_final e test
@@ -533,7 +547,11 @@ def main():
     window_size = 100
     n_train_norm=12
     n_train_anom=3
-    X_train, y_train, X_test, y_test, X_train_final, y_train_final = prepare_windows_for_qtk(dataset,n_train_norm=n_train_norm,n_train_anom=n_train_anom)
+    X_train, y_train, X_train_final, y_train_final, X_test, y_test = prepare_windows_for_qtk(
+      dataset,
+      n_train_norm=n_train_norm,
+      n_train_anom=n_train_anom
+    )
 
     print(f"\nPrepared windows -> X_train: {len(X_train)}, X_test: {len(X_test)}")
     # labels for SVM functions
@@ -662,13 +680,18 @@ def run_oneclass_svm_quantum_std(qk: QuantumKernel, K_train, K_test, y_true, y_t
     oc_best = None
 
     for nu in nus:
-        oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
-        y_pred_train = oc.predict(K_train)
-        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
-        if metric > best_metric:
-            best_metric = metric
-            best_nu = nu
-            oc_best = oc
+      oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
+  
+      scores_train = oc.decision_function(K_train)
+  
+      # Preferisce il modello che assegna score più elevati/stabili
+      # ai campioni normali del training set.
+      metric = np.mean(scores_train)
+  
+      if metric > best_metric:
+          best_metric = metric
+          best_nu = nu
+          oc_best = oc
 
     scores_test = oc_best.decision_function(K_test)
     auc = roc_auc_score((y_true == -1).astype(int), -scores_test)  # invert per allineamento
@@ -696,8 +719,10 @@ def main1():
     window_size = 100
     n_train_norm = 12
     n_train_anom = 3
-    X_train, y_train, X_test, y_test, X_train_final, y_train_final = prepare_windows_for_qtk(
-        dataset, n_train_norm=n_train_norm, n_train_anom=n_train_anom
+    X_train, y_train, X_train_final, y_train_final, X_test, y_test = prepare_windows_for_qtk(
+      dataset,
+      n_train_norm=n_train_norm,
+      n_train_anom=n_train_anom
     )
 
     y_true_test = np.array(y_test)
