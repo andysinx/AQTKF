@@ -441,79 +441,167 @@ def prepare_windows_for_qtk(unified_df, window_size=100, overlap_size=40,
                             n_final_norm=45,
                             n_test_norm=45, n_test_anom=10,
                             seed=42):
+
     rng = np.random.default_rng(seed)
 
-    # --------------------------
-    # Separiamo normali e anomali
-    # --------------------------
-    normal_df = unified_df[unified_df['label'] == 1].reset_index(drop=True)
-    anomalous_df = unified_df[unified_df['label'] == -1].reset_index(drop=True)
+    # -------------------------------------------------
+    # Separate normal and anomalous observations
+    # -------------------------------------------------
+    normal_df = unified_df[
+        unified_df["label"] == 1
+    ].reset_index(drop=True)
 
-    # --------------------------
-    # Creazione finestre
-    # --------------------------
-    windows_normal = [w for w in create_windows(normal_df, window_size, overlap_size) if len(w) == window_size]
-    windows_anom = [w for w in create_windows(anomalous_df, window_size, overlap_size) if len(w) == window_size]
+    anomalous_df = unified_df[
+        unified_df["label"] == -1
+    ].reset_index(drop=True)
 
-    print(f"Available normal windows: {len(windows_normal)}, anomalous windows: {len(windows_anom)}")
-
-    # --------------------------
-    # 1️⃣ X_train piccolo (ottimizzazione)
-    # --------------------------
-    X_train = windows_normal[:n_train_norm] + windows_anom[:n_train_anom]
-    y_train = np.array([1]*n_train_norm + [-1]*n_train_anom)
-
-    # --------------------------
-    # 2️⃣ X_train_final: SOLO NORMALI per One-Class SVM
-    # --------------------------
-    start_norm_final = n_train_norm
-  
-    X_train_final = windows_normal[
-        start_norm_final:start_norm_final + n_final_norm
+    # -------------------------------------------------
+    # Generate windows
+    # -------------------------------------------------
+    windows_normal = [
+        w for w in create_windows(
+            normal_df,
+            window_size,
+            overlap_size
+        )
+        if len(w) == window_size
     ]
-  
-    y_train_final = np.ones(len(X_train_final), dtype=int)
 
-    # --------------------------
-    # 3️⃣ X_test
-    # --------------------------
-    start_norm_test = start_norm_final + n_final_norm
-    start_anom_test = n_train_anom
-    
-    X_test = (
-        windows_normal[start_norm_test:start_norm_test + n_test_norm]
-        + windows_anom[start_anom_test:start_anom_test + n_test_anom]
+    windows_anom = [
+        w for w in create_windows(
+            anomalous_df,
+            window_size,
+            overlap_size
+        )
+        if len(w) == window_size
+    ]
+
+    print(
+        f"Available normal windows: {len(windows_normal)}, "
+        f"anomalous windows: {len(windows_anom)}"
     )
-    
+
+    # Number of windows to skip between subsets.
+    # With window_size=100 and overlap_size=40,
+    # skipping one window guarantees that windows belonging
+    # to different subsets do not share observations.
+    stride = window_size - overlap_size
+    gap_windows = int(np.ceil(overlap_size / stride))
+
+    # =================================================
+    # 1. Adaptation set for EvoVAQ
+    # =================================================
+    X_train = (
+        windows_normal[:n_train_norm]
+        + windows_anom[:n_train_anom]
+    )
+
+    y_train = np.array(
+        [1] * n_train_norm
+        + [-1] * n_train_anom
+    )
+
+    # =================================================
+    # 2. Final OCSVM training set
+    #    NORMAL WINDOWS ONLY
+    # =================================================
+    start_norm_final = n_train_norm + gap_windows
+
+    X_train_final = windows_normal[
+        start_norm_final:
+        start_norm_final + n_final_norm
+    ]
+
+    y_train_final = np.ones(
+        len(X_train_final),
+        dtype=int
+    )
+
+    # =================================================
+    # 3. Independent test set
+    # =================================================
+    start_norm_test = (
+        start_norm_final
+        + n_final_norm
+        + gap_windows
+    )
+
+    # Anomalous windows used for adaptation must not
+    # overlap anomalous windows used for testing.
+    start_anom_test = n_train_anom + gap_windows
+
+    test_normal = windows_normal[
+        start_norm_test:
+        start_norm_test + n_test_norm
+    ]
+
+    test_anom = windows_anom[
+        start_anom_test:
+        start_anom_test + n_test_anom
+    ]
+
+    X_test = test_normal + test_anom
+
     y_test = np.array(
-        [1] * len(windows_normal[start_norm_test:start_norm_test + n_test_norm])
-        + [-1] * len(windows_anom[start_anom_test:start_anom_test + n_test_anom])
+        [1] * len(test_normal)
+        + [-1] * len(test_anom)
     )
 
-    # --------------------------
-    # Shuffle train, train_final e test
-    # --------------------------
+    # =================================================
+    # Shuffle each subset independently
+    # =================================================
     def shuffle_windows(X, y):
         indices = rng.permutation(len(X))
         return [X[i] for i in indices], y[indices]
 
-    X_train, y_train = shuffle_windows(X_train, y_train)
-    X_train_final, y_train_final = shuffle_windows(X_train_final, y_train_final)
-    X_test, y_test = shuffle_windows(X_test, y_test)
+    X_train, y_train = shuffle_windows(
+        X_train,
+        y_train
+    )
 
-    # --------------------------
+    X_train_final, y_train_final = shuffle_windows(
+        X_train_final,
+        y_train_final
+    )
+
+    X_test, y_test = shuffle_windows(
+        X_test,
+        y_test
+    )
+
+    # =================================================
     # Flatten windows
-    # --------------------------
+    # =================================================
     def flatten_windows(X):
-        return [np.array([timestep.flatten() for timestep in w.drop(columns=["anomaly","label"], errors="ignore").to_numpy()]) for w in X]
+        return [
+            np.array([
+                timestep.flatten()
+                for timestep in w.drop(
+                    columns=["anomaly", "label"],
+                    errors="ignore"
+                ).to_numpy()
+            ])
+            for w in X
+        ]
 
     X_train = flatten_windows(X_train)
     X_train_final = flatten_windows(X_train_final)
     X_test = flatten_windows(X_test)
 
-    print(f"X_train: {len(X_train)} windows, X_train_final: {len(X_train_final)} windows, X_test: {len(X_test)} windows")
+    print(
+        f"X_train: {len(X_train)} windows, "
+        f"X_train_final: {len(X_train_final)} windows, "
+        f"X_test: {len(X_test)} windows"
+    )
 
-    return X_train, y_train, X_train_final, y_train_final, X_test, y_test
+    return (
+        X_train,
+        y_train,
+        X_train_final,
+        y_train_final,
+        X_test,
+        y_test
+    )
 
 
 
