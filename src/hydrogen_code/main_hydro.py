@@ -145,9 +145,12 @@ def run_oneclass_svm_quantum(qtk: QuantumTemporalKernel, K_train, K_test, y_true
     for nu in nus:
         oc = OneClassSVM(kernel="precomputed", nu=nu).fit(K_train)
         y_pred_train = oc.predict(K_train)
-        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
-
-        if  metric > best_metric:
+    
+        # Training set contains normal samples only:
+        # select nu by maximizing the fraction classified as normal.
+        metric = np.mean(y_pred_train == 1)
+    
+        if metric > best_metric:
             best_metric = metric
             best_nu = nu
             oc_best = oc
@@ -191,11 +194,19 @@ def run_oneclass_svm_classical(X_train, X_test, y_true, y_true_train, kernel="rb
     oc_best = None
 
     # Grid search over nu
-    for nu in nus:
-        oc = OneClassSVM(kernel=kernel, nu=nu, gamma=gamma).fit(X_train)
+   for nu in nus:
+        oc = OneClassSVM(
+            kernel=kernel,
+            nu=nu,
+            gamma=gamma
+        ).fit(X_train)
+    
         y_pred_train = oc.predict(X_train)
-        metric = f1_score((y_true_train == -1).astype(int), (y_pred_train == -1).astype(int))
-        if  metric > best_metric:
+    
+        # Training set contains normal samples only.
+        metric = np.mean(y_pred_train == 1)
+    
+        if metric > best_metric:
             best_metric = metric
             best_nu = nu
             oc_best = oc
