@@ -42,7 +42,7 @@ def compute_metrics(name, y_true, y_pred, scores):
     print("Precision    :", precision_score(y_true, y_pred, pos_label=-1))
     print("Recall       :", recall_score(y_true, y_pred, pos_label=-1))
     print("F1           :", f1_score(y_true, y_pred, pos_label=-1))
-    print("ROC-AUC      :", roc_auc_score((y_true == -1).astype(int), scores))
+    print("ROC-AUC      :", roc_auc_score((y_true == -1).astype(int), -scores))
 
 
 def plot_scores(scores_n, scores_a, name):
@@ -259,7 +259,7 @@ def main():
         # FINAL TRAIN SET (ONLY NORMAL, REALISTIC SETUP)
         # ========================================================
     X_train = select_random_windows(
-        datalist_norm[:55], window_size
+        datalist_norm[55:105], window_size
     )
 
     # ========================================================
