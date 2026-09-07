@@ -34,6 +34,7 @@ AQTKF is composed of the following elements:
 
 <p align="center">
   <img src="./circuit_ansatz.jpg" width="45%">
+  <img src="./qtk_formulation.jpg" width="45%">
 </p>
 
 ---
